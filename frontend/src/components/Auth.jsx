@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { CheckCircle, FileText, Eye, EyeOff } from 'lucide-react';
+import { CheckCircle, FileText, Eye, EyeOff, AlertTriangle } from 'lucide-react';
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
@@ -18,6 +18,7 @@ export default function Auth({ onLoginSuccess }) {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [unauthorizedDomain, setUnauthorizedDomain] = useState(false);
 
   const formatFirebaseError = (err) => {
     const code = err?.code || '';
@@ -38,13 +39,15 @@ export default function Auth({ onLoginSuccess }) {
       return 'Google Sign-In popup was closed before completing.';
     }
     if (code === 'auth/unauthorized-domain') {
-      return 'Domain not authorized in Firebase console. Please add this domain to Firebase Auth settings.';
+      setUnauthorizedDomain(true);
+      return 'Domain not authorized for Google Auth in Firebase Console.';
     }
     return err.message || 'Authentication failed. Please try again.';
   };
 
   const handleGoogleSignIn = async () => {
     setError('');
+    setUnauthorizedDomain(false);
     setLoading(true);
     try {
       const result = await signInWithPopup(auth, googleProvider);
@@ -69,6 +72,7 @@ export default function Auth({ onLoginSuccess }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    setUnauthorizedDomain(false);
 
     if (isSignUp && password !== confirmPassword) {
       setError('Passwords do not match');
@@ -133,6 +137,7 @@ export default function Auth({ onLoginSuccess }) {
               onClick={() => {
                 setIsSignUp(!isSignUp);
                 setError('');
+                setUnauthorizedDomain(false);
               }}
             >
               {isSignUp ? 'Sign in here' : 'Sign up for free'}
@@ -197,12 +202,34 @@ export default function Auth({ onLoginSuccess }) {
           <div style={{
             background: '#fee2e2',
             color: '#dc2626',
-            padding: '10px 14px',
-            borderRadius: '6px',
+            padding: '12px 14px',
+            borderRadius: '8px',
             fontSize: '13px',
-            marginBottom: '16px'
+            marginBottom: '16px',
+            lineHeight: 1.4
           }}>
             {error}
+          </div>
+        )}
+
+        {unauthorizedDomain && (
+          <div style={{
+            background: '#fffbeb',
+            border: '1px solid #fde68a',
+            color: '#92400e',
+            padding: '12px 14px',
+            borderRadius: '8px',
+            fontSize: '12px',
+            marginBottom: '20px',
+            lineHeight: 1.5
+          }}>
+            <div style={{ fontWeight: 600, marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <AlertTriangle size={14} color="#d97706" />
+              How to fix Authorized Domain in Firebase:
+            </div>
+            1. Open <a href="https://console.firebase.google.com/project/life-os-app-2026/authentication/settings" target="_blank" rel="noreferrer" style={{ color: '#2563eb', fontWeight: 600 }}>Firebase Console</a><br />
+            2. Go to <strong>Authentication</strong> &rarr; <strong>Settings</strong> &rarr; <strong>Authorized domains</strong><br />
+            3. Click <strong>Add Domain</strong> and paste: <code style={{ background: '#fef3c7', padding: '2px 4px', borderRadius: '4px' }}>autoinvoice-frontend.saumyamir25.workers.dev</code>
           </div>
         )}
 
