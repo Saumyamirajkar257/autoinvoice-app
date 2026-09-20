@@ -1,0 +1,368 @@
+import React, { useState, useEffect } from 'react';
+import { ArrowLeft, Plus, Trash2, CheckCircle2, Info, Send, Save } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { api } from '../api';
+import { generateInvoicePDF } from './pdfGenerator';
+import { formatCurrency, getCurrencySymbol } from '../utils/currency';
+
+export default function CreateInvoice({ clients, onRefresh, showToast, userProfile }) {
+  const navigate = useNavigate();
+  // Form state
+  const [selectedClient, setSelectedClient] = useState('');
+  const [dueDate, setDueDate] = useState('2025-10-18');
+  const [items, setItems] = useState([
+    { id: 1, description: '', quantity: 1, rate: 0 }
+  ]);
+  const [discount, setDiscount] = useState(0);
+  const [taxRate, setTaxRate] = useState(18);
+  const [notes, setNotes] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  // Set default client if available
+  useEffect(() => {
+    if (clients.length > 0 && !selectedClient) {
+      setSelectedClient(clients[0].company);
+    }
+  }, [clients]);
+
+  // Adjust tax rate based on business/client country
+  useEffect(() => {
+    const clientObj = clients.find(c => c.company === selectedClient);
+    if (clientObj?.country === 'India' || userProfile?.country === 'India') {
+      setTaxRate(18); // India GST standard
+    } else {
+      setTaxRate(18); // Default standard
+    }
+  }, [selectedClient, userProfile, clients]);
+
+  // Math Calculations
+  const subtotal = items.reduce((sum, item) => {
+    const q = Number(item.quantity) || 0;
+    const r = Number(item.rate) || 0;
+    return sum + (q * r);
+  }, 0);
+
+  const discountAmount = (subtotal * (Number(discount) || 0)) / 100;
+  const taxable = subtotal - discountAmount;
+  const taxAmount = (taxable * (Number(taxRate) || 0)) / 100;
+  const total = taxable + taxAmount;
+
+  const formatMoney = (val) => formatCurrency(val, userProfile?.currency);
+  const currencySymbol = getCurrencySymbol(userProfile?.currency);
+
+  // Item row operations
+  const addItemRow = () => {
+    setItems([
+      ...items,
+      { id: Date.now(), description: '', quantity: 1, rate: 0 }
+    ]);
+  };
+
+  const removeItemRow = (id) => {
+    if (items.length <= 1) {
+      showToast('Invoice must have at least one item', 'info');
+      return;
+    }
+    setItems(items.filter(item => item.id !== id));
+  };
+
+  const updateItem = (id, field, value) => {
+    setItems(items.map(item => {
+      if (item.id === id) {
+        return { ...item, [field]: value };
+      }
+      return item;
+    }));
+  };
+
+  // Submit invoice
+  const handleSubmit = async (status = 'sent') => {
+    if (!selectedClient) {
+      showToast('Please select a client', 'error');
+      return;
+    }
+
+    const validItems = items.filter(item => item.description.trim() !== '');
+    if (validItems.length === 0) {
+      showToast('Please enter description for at least one item', 'error');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const clientObj = clients.find(c => c.company === selectedClient);
+
+      const payload = {
+        client: selectedClient,
+        clientEmail: clientObj?.email || '',
+        due: dueDate || 'Not set',
+        description: validItems[0].description,
+        items: validItems.map(item => ({
+          description: item.description,
+          quantity: Number(item.quantity) || 1,
+          rate: Number(item.rate) || 0,
+          amount: (Number(item.quantity) || 1) * (Number(item.rate) || 0)
+        })),
+        quantity: Number(validItems[0].quantity) || 1,
+        rate: Number(validItems[0].rate) || 0,
+        discount: Number(discount) || 0,
+        tax: Number(taxRate) || 0,
+        notes: notes.trim(),
+        status: status
+      };
+
+      const createdInvoice = await api.addInvoice(payload);
+      showToast(`Invoice ${createdInvoice.id} created successfully!`, 'success');
+      onRefresh();
+
+      if (window.confirm('Invoice created successfully! Would you like to download the PDF now?')) {
+        generateInvoicePDF(createdInvoice, userProfile, clientObj);
+      }
+
+      navigate('/invoices');
+    } catch (err) {
+      showToast(err.message || 'Failed to create invoice', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="content-page">
+      {/* Header with Back Button */}
+      <div className="page-header">
+        <div className="page-header-back">
+          <button className="back-btn" onClick={() => navigate('/invoices')} title="Go Back">
+            <ArrowLeft size={18} />
+          </button>
+          <div>
+            <h1 className="page-title">Create Invoice</h1>
+            <p className="page-subtitle">Create a new professional invoice with automatic tax calculation.</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Grid: Form on Left, Summary on Right */}
+      <div className="create-invoice-grid">
+        {/* Left Side: Form Details */}
+        <div>
+          {/* Card 1: Client Info */}
+          <div className="card">
+            <h3 className="card-title">Client Information</h3>
+            <div className="form-row-2">
+              <div className="form-group">
+                <label className="form-label">
+                  Select Client <span className="req">*</span>
+                </label>
+                <select
+                  className="form-select"
+                  value={selectedClient}
+                  onChange={(e) => setSelectedClient(e.target.value)}
+                >
+                  <option value="">Choose a client...</option>
+                  {clients.map(c => (
+                    <option key={c.id} value={c.company}>
+                      {c.company} ({c.contact || c.email})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">
+                  Due Date <span className="req">*</span>
+                </label>
+                <input
+                  type="date"
+                  className="form-input"
+                  value={dueDate}
+                  onChange={(e) => setDueDate(e.target.value)}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Card 2: Invoice Items */}
+          <div className="card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 className="card-title" style={{ margin: 0 }}>Invoice Items</h3>
+              <button
+                type="button"
+                className="btn-secondary btn-sm"
+                onClick={addItemRow}
+              >
+                <Plus size={14} />
+                Add Item
+              </button>
+            </div>
+
+            <table className="items-table">
+              <thead>
+                <tr>
+                  <th style={{ width: '45%' }}>DESCRIPTION</th>
+                  <th style={{ width: '18%' }}>QUANTITY</th>
+                  <th style={{ width: '22%' }}>RATE ({currencySymbol})</th>
+                  <th style={{ width: '15%', textAlign: 'right' }}>AMOUNT</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((item) => {
+                  const lineTotal = (Number(item.quantity) || 0) * (Number(item.rate) || 0);
+                  return (
+                    <tr key={item.id}>
+                      <td>
+                        <input
+                          type="text"
+                          className="item-input"
+                          placeholder="Description of service or product"
+                          value={item.description}
+                          onChange={(e) => updateItem(item.id, 'description', e.target.value)}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="number"
+                          min="1"
+                          className="item-input"
+                          value={item.quantity}
+                          onChange={(e) => updateItem(item.id, 'quantity', e.target.value)}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          className="item-input"
+                          value={item.rate}
+                          onChange={(e) => updateItem(item.id, 'rate', e.target.value)}
+                        />
+                      </td>
+                      <td style={{ textAlign: 'right', fontWeight: 600, color: '#0f172a' }}>
+                        {formatMoney(lineTotal)}
+                      </td>
+                      <td style={{ textAlign: 'center' }}>
+                        <button
+                          type="button"
+                          className="icon-action-btn delete"
+                          onClick={() => removeItemRow(item.id)}
+                          title="Remove Item"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Card 3: Additional Information */}
+          <div className="card">
+            <h3 className="card-title">Additional Information</h3>
+            <div className="form-group">
+              <label className="form-label">Notes / Payment Terms</label>
+              <textarea
+                className="form-textarea"
+                placeholder="Additional notes, payment terms, or special instructions..."
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Right Side: Invoice Summary */}
+        <div>
+          <div className="summary-card">
+            <h3 className="card-title">Invoice Summary</h3>
+            <div className="summary-badge">
+              <CheckCircle2 size={14} />
+              Real-time calculation ({currencySymbol})
+            </div>
+
+            <div className="summary-row">
+              <span>Subtotal:</span>
+              <strong style={{ color: '#0f172a' }}>{formatMoney(subtotal)}</strong>
+            </div>
+
+            <div className="summary-row">
+              <span>Discount (%):</span>
+              <input
+                type="number"
+                min="0"
+                max="100"
+                className="form-input"
+                style={{ width: '80px', padding: '6px 8px', textAlign: 'right' }}
+                value={discount}
+                onChange={(e) => setDiscount(e.target.value)}
+              />
+            </div>
+
+            {Number(discount) > 0 && (
+              <div className="summary-row" style={{ color: '#16a34a' }}>
+                <span>Discount Amount:</span>
+                <span>-{formatMoney(discountAmount)}</span>
+              </div>
+            )}
+
+            <div className="summary-row">
+              <span>Tax ({taxRate}%):</span>
+              <strong style={{ color: '#0f172a' }}>{formatMoney(taxAmount)}</strong>
+            </div>
+
+            {/* Tax Info Box */}
+            <div className="tax-info-box">
+              <div style={{ display: 'flex', gap: '6px', alignItems: 'flex-start' }}>
+                <Info size={14} style={{ marginTop: '2px', flexShrink: 0 }} />
+                <div>
+                  <strong>Tax Calculation:</strong>
+                  <div>
+                    {selectedClient ? `Client: ${selectedClient}` : 'Select a client to calculate tax'}
+                  </div>
+                  <div>
+                    Your Business: {userProfile?.country || 'India'} ({userProfile?.taxId || 'Standard GST/VAT'})
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Final Total */}
+            <div className="summary-row total-row">
+              <span>Total:</span>
+              <span className="summary-total-val">{formatMoney(total)}</span>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="summary-actions">
+              <button
+                type="button"
+                className="btn-secondary btn-full"
+                onClick={() => handleSubmit('draft')}
+                disabled={saving}
+              >
+                <Save size={16} />
+                Save as Draft
+              </button>
+              <button
+                type="button"
+                className="btn-primary btn-full"
+                onClick={() => handleSubmit('sent')}
+                disabled={saving}
+              >
+                <Send size={16} />
+                {saving ? 'Creating...' : 'Create & Mark as Sent'}
+              </button>
+            </div>
+
+            <p className="tax-footer-note">
+              Tax calculated based on real tax laws for your business location
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

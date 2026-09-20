@@ -1,0 +1,54 @@
+[
+  {
+    "id": "INV-002",
+    "client": "Google",
+    "clientEmail": "zzaidd2003@gmail.com",
+    "amount": 1500,
+    "status": "sent",
+    "created": "Sep 18, 2025",
+    "due": "Oct 18, 2025",
+    "description": "Mobile App Design",
+    "items": [
+      {
+        "description": "Mobile App Design",
+        "quantity": 1,
+        "rate": 1271.19,
+        "amount": 1271.19
+      }
+    ],
+    "quantity": 1,
+    "rate": 1271.19,
+    "discount": 0,
+    "tax": 18,
+    "subtotal": 1271.19,
+    "discountAmount": 0,
+    "taxAmount": 228.81,
+    "notes": "Payment due within 30 days."
+  },
+  {
+    "id": "INV-001",
+    "client": "Google",
+    "clientEmail": "zzaidd2003@gmail.com",
+    "amount": 708,
+    "status": "paid",
+    "created": "Sep 18, 2025",
+    "due": "Oct 18, 2025",
+    "description": "Website Development",
+    "items": [
+      {
+        "description": "Website Development",
+        "quantity": 1,
+        "rate": 600,
+        "amount": 600
+      }
+    ],
+    "quantity": 1,
+    "rate": 600,
+    "discount": 0,
+    "tax": 18,
+    "subtotal": 600,
+    "discountAmount": 0,
+    "taxAmount": 108,
+    "notes": "Thank you for your business!"
+  }
+]
