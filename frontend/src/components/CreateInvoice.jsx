@@ -1,15 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Plus, Trash2, CheckCircle2, Info, Send, Save } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, CheckCircle2, Info, Send, Save, Globe, RefreshCw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { generateInvoicePDF } from './pdfGenerator';
-import { formatCurrency, getCurrencySymbol } from '../utils/currency';
+import { formatCurrency, getCurrencySymbol, convertCurrency, getCurrencyCode } from '../utils/currency';
 
 export default function CreateInvoice({ clients, onRefresh, showToast, userProfile }) {
   const navigate = useNavigate();
   // Form state
   const [selectedClient, setSelectedClient] = useState('');
   const [dueDate, setDueDate] = useState('2025-10-18');
+  const [language, setLanguage] = useState(userProfile?.language || 'English');
   const [items, setItems] = useState([
     { id: 1, description: '', quantity: 1, rate: 0 }
   ]);
@@ -47,8 +48,15 @@ export default function CreateInvoice({ clients, onRefresh, showToast, userProfi
   const taxAmount = (taxable * (Number(taxRate) || 0)) / 100;
   const total = taxable + taxAmount;
 
-  const formatMoney = (val) => formatCurrency(val, userProfile?.currency);
-  const currencySymbol = getCurrencySymbol(userProfile?.currency);
+  const userCurrency = userProfile?.currency || 'USD - US Dollar';
+  const formatMoney = (val) => formatCurrency(val, userCurrency);
+  const currencySymbol = getCurrencySymbol(userCurrency);
+  const currencyCode = getCurrencyCode(userCurrency);
+
+  // Live FX Conversions
+  const fxConversions = ['USD', 'INR', 'EUR', 'GBP']
+    .filter(c => c !== currencyCode)
+    .map(c => convertCurrency(total, userCurrency, c));
 
   // Item row operations
   const addItemRow = () => {
@@ -96,6 +104,7 @@ export default function CreateInvoice({ clients, onRefresh, showToast, userProfi
         client: selectedClient,
         clientEmail: clientObj?.email || '',
         due: dueDate || 'Not set',
+        language: language,
         description: validItems[0].description,
         items: validItems.map(item => ({
           description: item.description,
@@ -116,7 +125,7 @@ export default function CreateInvoice({ clients, onRefresh, showToast, userProfi
       onRefresh();
 
       if (window.confirm('Invoice created successfully! Would you like to download the PDF now?')) {
-        generateInvoicePDF(createdInvoice, userProfile, clientObj);
+        generateInvoicePDF(createdInvoice, userProfile, clientObj, language);
       }
 
       navigate('/invoices');
@@ -137,7 +146,7 @@ export default function CreateInvoice({ clients, onRefresh, showToast, userProfi
           </button>
           <div>
             <h1 className="page-title">Create Invoice</h1>
-            <p className="page-subtitle">Create a new professional invoice with automatic tax calculation.</p>
+            <p className="page-subtitle">Create a new professional invoice with live FX rates and multi-language support.</p>
           </div>
         </div>
       </div>
@@ -146,10 +155,10 @@ export default function CreateInvoice({ clients, onRefresh, showToast, userProfi
       <div className="create-invoice-grid">
         {/* Left Side: Form Details */}
         <div>
-          {/* Card 1: Client Info */}
+          {/* Card 1: Client & Language Settings */}
           <div className="card">
-            <h3 className="card-title">Client Information</h3>
-            <div className="form-row-2">
+            <h3 className="card-title">Client & Language Settings</h3>
+            <div className="form-row-3">
               <div className="form-group">
                 <label className="form-label">
                   Select Client <span className="req">*</span>
@@ -178,6 +187,24 @@ export default function CreateInvoice({ clients, onRefresh, showToast, userProfi
                   value={dueDate}
                   onChange={(e) => setDueDate(e.target.value)}
                 />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <Globe size={14} color="#2563eb" />
+                  PDF Language
+                </label>
+                <select
+                  className="form-select"
+                  value={language}
+                  onChange={(e) => setLanguage(e.target.value)}
+                >
+                  <option value="English">English 🇺🇸</option>
+                  <option value="Spanish">Spanish 🇪🇸</option>
+                  <option value="French">French 🇫🇷</option>
+                  <option value="German">German 🇩🇪</option>
+                  <option value="Hindi">Hindi 🇮🇳</option>
+                </select>
               </div>
             </div>
           </div>
@@ -274,7 +301,7 @@ export default function CreateInvoice({ clients, onRefresh, showToast, userProfi
           </div>
         </div>
 
-        {/* Right Side: Invoice Summary */}
+        {/* Right Side: Invoice Summary & Live FX Converter */}
         <div>
           <div className="summary-card">
             <h3 className="card-title">Invoice Summary</h3>
@@ -313,25 +340,32 @@ export default function CreateInvoice({ clients, onRefresh, showToast, userProfi
               <strong style={{ color: '#0f172a' }}>{formatMoney(taxAmount)}</strong>
             </div>
 
-            {/* Tax Info Box */}
-            <div className="tax-info-box">
-              <div style={{ display: 'flex', gap: '6px', alignItems: 'flex-start' }}>
-                <Info size={14} style={{ marginTop: '2px', flexShrink: 0 }} />
-                <div>
-                  <strong>Tax Calculation:</strong>
-                  <div>
-                    {selectedClient ? `Client: ${selectedClient}` : 'Select a client to calculate tax'}
+            {/* Live Exchange Rate Converter Widget */}
+            <div style={{
+              background: '#eff6ff',
+              border: '1px solid #bfdbfe',
+              borderRadius: '8px',
+              padding: '12px',
+              margin: '16px 0',
+              fontSize: '12px'
+            }}>
+              <div style={{ fontWeight: 600, color: '#1e40af', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <RefreshCw size={14} className="spin-icon" />
+                Live FX Currency Estimates:
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
+                {fxConversions.map(fx => (
+                  <div key={fx.code} style={{ background: '#ffffff', padding: '6px 8px', borderRadius: '6px', border: '1px solid #dbeafe', textAlign: 'center' }}>
+                    <div style={{ fontSize: '10px', color: '#64748b' }}>{fx.code}</div>
+                    <div style={{ fontWeight: 700, color: '#1e3a8a' }}>{fx.formatted}</div>
                   </div>
-                  <div>
-                    Your Business: {userProfile?.country || 'India'} ({userProfile?.taxId || 'Standard GST/VAT'})
-                  </div>
-                </div>
+                ))}
               </div>
             </div>
 
             {/* Final Total */}
             <div className="summary-row total-row">
-              <span>Total:</span>
+              <span>Total ({language}):</span>
               <span className="summary-total-val">{formatMoney(total)}</span>
             </div>
 
@@ -356,10 +390,6 @@ export default function CreateInvoice({ clients, onRefresh, showToast, userProfi
                 {saving ? 'Creating...' : 'Create & Mark as Sent'}
               </button>
             </div>
-
-            <p className="tax-footer-note">
-              Tax calculated based on real tax laws for your business location
-            </p>
           </div>
         </div>
       </div>

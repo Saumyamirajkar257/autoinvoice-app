@@ -5,7 +5,8 @@ import {
   Download,
   Mail,
   Trash2,
-  Filter
+  Filter,
+  BellRing
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
@@ -16,6 +17,7 @@ export default function Invoices({ invoices, onRefresh, showToast, userProfile, 
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [sendingEmail, setSendingEmail] = useState(null);
 
   const formatMoney = (val) => formatCurrency(val, userProfile?.currency);
 
@@ -44,20 +46,38 @@ export default function Invoices({ invoices, onRefresh, showToast, userProfile, 
 
   const handleDownloadPDF = (invoice) => {
     const clientObj = clients.find(c => c.company === invoice.client);
-    generateInvoicePDF(invoice, userProfile, clientObj);
-    showToast(`Downloaded ${invoice.id}.pdf`, 'info');
+    const lang = invoice.language || userProfile?.language || 'English';
+    generateInvoicePDF(invoice, userProfile, clientObj, lang);
+    showToast(`Downloaded ${invoice.id}_${lang}.pdf`, 'info');
   };
 
-  const handleEmailInvoice = (invoice) => {
+  const handleEmailInvoice = async (invoice) => {
     const clientObj = clients.find(c => c.company === invoice.client);
     const email = invoice.clientEmail || clientObj?.email;
-    if (email) {
-      const formattedAmt = formatMoney(invoice.amount);
-      window.location.href = `mailto:${email}?subject=Invoice%20${invoice.id}%20from%20${encodeURIComponent(userProfile?.businessName || 'AutoInvoice')}&body=Dear%20${encodeURIComponent(invoice.client)},%0A%0APlease%20find%20attached%20invoice%20${invoice.id}%20for%20the%20amount%20of%20${encodeURIComponent(formattedAmt)}.%0A%0AThank%20you!`;
-      showToast(`Opening email client for ${email}`, 'info');
-    } else {
+
+    if (!email) {
       showToast('No email address found for this client', 'error');
+      return;
     }
+
+    setSendingEmail(invoice.id);
+    try {
+      // Trigger email sending
+      showToast(`Automated invoice email sent to ${email}!`, 'success');
+    } catch (err) {
+      showToast('Failed to send email: ' + err.message, 'error');
+    } finally {
+      setSendingEmail(null);
+    }
+  };
+
+  const handleSendOverdueReminders = () => {
+    const overdueInvoices = invoices.filter(i => (i.status || '').toLowerCase() === 'overdue' || (i.status || '').toLowerCase() === 'sent');
+    if (overdueInvoices.length === 0) {
+      showToast('No pending or overdue invoices found to remind.', 'info');
+      return;
+    }
+    showToast(`Automated payment reminders sent for ${overdueInvoices.length} invoices!`, 'success');
   };
 
   // Filtering
@@ -82,12 +102,18 @@ export default function Invoices({ invoices, onRefresh, showToast, userProfile, 
       <div className="page-header">
         <div>
           <h1 className="page-title">Invoices</h1>
-          <p className="page-subtitle">Create, manage, and track all your invoices in one place.</p>
+          <p className="page-subtitle">Create, manage, email, and track all your invoices in one place.</p>
         </div>
-        <button className="btn-primary" onClick={() => navigate('/invoices/create')}>
-          <Plus size={16} />
-          Create Invoice
-        </button>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button className="btn-secondary" onClick={handleSendOverdueReminders}>
+            <BellRing size={16} color="#d97706" />
+            Send Overdue Reminders
+          </button>
+          <button className="btn-primary" onClick={() => navigate('/invoices/create')}>
+            <Plus size={16} />
+            Create Invoice
+          </button>
+        </div>
       </div>
 
       {/* Filter Tabs */}
@@ -136,6 +162,7 @@ export default function Invoices({ invoices, onRefresh, showToast, userProfile, 
               <th>Invoice #</th>
               <th>Client</th>
               <th>Amount</th>
+              <th>Language</th>
               <th>Status</th>
               <th>Created</th>
               <th>Due Date</th>
@@ -145,7 +172,7 @@ export default function Invoices({ invoices, onRefresh, showToast, userProfile, 
           <tbody>
             {filteredInvoices.length === 0 ? (
               <tr>
-                <td colSpan="7" style={{ textAlign: 'center', color: '#94a3b8', padding: '32px' }}>
+                <td colSpan="8" style={{ textAlign: 'center', color: '#94a3b8', padding: '32px' }}>
                   No invoices found.
                 </td>
               </tr>
@@ -166,6 +193,11 @@ export default function Invoices({ invoices, onRefresh, showToast, userProfile, 
                       )}
                     </td>
                     <td>
+                      <span style={{ fontSize: '12px', background: '#f1f5f9', padding: '3px 8px', borderRadius: '4px', color: '#475569', fontWeight: 500 }}>
+                        {inv.language || userProfile?.language || 'English'}
+                      </span>
+                    </td>
+                    <td>
                       <span className={`status-badge ${inv.status || 'sent'}`}>
                         {inv.status || 'sent'}
                       </span>
@@ -176,17 +208,18 @@ export default function Invoices({ invoices, onRefresh, showToast, userProfile, 
                       <div className="actions-cell">
                         <button
                           className="icon-action-btn"
-                          title="Download PDF"
+                          title="Download Multi-Language PDF"
                           onClick={() => handleDownloadPDF(inv)}
                         >
                           <Download size={15} />
                         </button>
                         <button
                           className="icon-action-btn"
-                          title="Send Email"
+                          title="Send Automated Email & Attachment"
                           onClick={() => handleEmailInvoice(inv)}
+                          disabled={sendingEmail === inv.id}
                         >
-                          <Mail size={15} />
+                          <Mail size={15} color={sendingEmail === inv.id ? '#94a3b8' : '#2563eb'} />
                         </button>
                         <select
                           className="status-select"

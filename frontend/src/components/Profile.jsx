@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Camera, Trash2, Save } from 'lucide-react';
+import { Camera, Trash2, Save, Globe } from 'lucide-react';
 import { api } from '../api';
 
 export default function Profile({ userProfile, onRefresh, showToast }) {
@@ -11,19 +11,21 @@ export default function Profile({ userProfile, onRefresh, showToast }) {
   const [website, setWebsite] = useState('');
   const [taxId, setTaxId] = useState('');
   const [currency, setCurrency] = useState('USD - US Dollar');
+  const [language, setLanguage] = useState('English');
   const [logo, setLogo] = useState('');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (userProfile) {
-      setFullName(userProfile.fullName || 'Zaid Shaikh');
-      setBusinessName(userProfile.businessName || "Zaid Shaikh's Business");
-      setAddress(userProfile.address || 'Please update your business address');
+      setFullName(userProfile.fullName || '');
+      setBusinessName(userProfile.businessName || '');
+      setAddress(userProfile.address || '');
       setCountry(userProfile.country || 'India');
-      setPhone(userProfile.phone || '9999999999');
-      setWebsite(userProfile.website || 'https://google.com');
+      setPhone(userProfile.phone || '');
+      setWebsite(userProfile.website || '');
       setTaxId(userProfile.taxId || '');
       setCurrency(userProfile.currency || 'USD - US Dollar');
+      setLanguage(userProfile.language || 'English');
       setLogo(userProfile.logo || '');
     }
   }, [userProfile]);
@@ -43,7 +45,7 @@ export default function Profile({ userProfile, onRefresh, showToast }) {
     e.preventDefault();
     setSaving(true);
     try {
-      const updated = await api.updateProfile({
+      await api.updateProfile({
         fullName,
         businessName,
         address,
@@ -52,6 +54,7 @@ export default function Profile({ userProfile, onRefresh, showToast }) {
         website,
         taxId,
         currency,
+        language,
         logo
       });
       showToast('Profile saved successfully!', 'success');
@@ -69,7 +72,7 @@ export default function Profile({ userProfile, onRefresh, showToast }) {
       <div className="page-header">
         <div>
           <h1 className="page-title">Profile</h1>
-          <p className="page-subtitle">Manage your business profile and personal information.</p>
+          <p className="page-subtitle">Manage your business profile, default currency, and PDF template language.</p>
         </div>
       </div>
 
@@ -126,6 +129,7 @@ export default function Profile({ userProfile, onRefresh, showToast }) {
               <input
                 type="text"
                 className="form-input"
+                placeholder="e.g. John Doe"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
                 required
@@ -138,6 +142,7 @@ export default function Profile({ userProfile, onRefresh, showToast }) {
               <input
                 type="text"
                 className="form-input"
+                placeholder="e.g. Acme Corporation"
                 value={businessName}
                 onChange={(e) => setBusinessName(e.target.value)}
                 required
@@ -179,7 +184,7 @@ export default function Profile({ userProfile, onRefresh, showToast }) {
                 <option value="Singapore">Singapore</option>
                 <option value="United Arab Emirates">United Arab Emirates</option>
               </select>
-              <p className="form-help">This determines tax calculations for your invoices</p>
+              <p className="form-help">This determines GST/tax calculations for your invoices</p>
             </div>
 
             <div className="form-group">
@@ -219,19 +224,39 @@ export default function Profile({ userProfile, onRefresh, showToast }) {
             </div>
           </div>
 
-          {/* Default Currency */}
-          <div className="form-group">
-            <label className="form-label">Default Currency</label>
-            <select
-              className="form-select"
-              value={currency}
-              onChange={(e) => setCurrency(e.target.value)}
-            >
-              <option value="USD - US Dollar">USD - US Dollar ($)</option>
-              <option value="INR - Indian Rupee">INR - Indian Rupee (₹)</option>
-              <option value="EUR - Euro">EUR - Euro (€)</option>
-              <option value="GBP - British Pound">GBP - British Pound (£)</option>
-            </select>
+          {/* Default Currency & Language Settings */}
+          <div className="form-row-2">
+            <div className="form-group">
+              <label className="form-label">Default Currency</label>
+              <select
+                className="form-select"
+                value={currency}
+                onChange={(e) => setCurrency(e.target.value)}
+              >
+                <option value="USD - US Dollar">USD - US Dollar ($)</option>
+                <option value="INR - Indian Rupee">INR - Indian Rupee (₹)</option>
+                <option value="EUR - Euro">EUR - Euro (€)</option>
+                <option value="GBP - British Pound">GBP - British Pound (£)</option>
+              </select>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <Globe size={14} color="#2563eb" />
+                Default PDF Language
+              </label>
+              <select
+                className="form-select"
+                value={language}
+                onChange={(e) => setLanguage(e.target.value)}
+              >
+                <option value="English">English 🇺🇸</option>
+                <option value="Spanish">Spanish 🇪🇸</option>
+                <option value="French">French 🇫🇷</option>
+                <option value="German">German 🇩🇪</option>
+                <option value="Hindi">Hindi 🇮🇳</option>
+              </select>
+            </div>
           </div>
 
           <button

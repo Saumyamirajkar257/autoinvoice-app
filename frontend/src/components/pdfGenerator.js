@@ -1,12 +1,16 @@
 import { jsPDF } from 'jspdf';
 import { formatCurrency } from '../utils/currency';
+import { getText } from '../utils/languages';
 
-export function generateInvoicePDF(invoice, userProfile, clientObj) {
+export function generateInvoicePDF(invoice, userProfile, clientObj, languageOverride) {
   const doc = new jsPDF();
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
   const p = userProfile || {};
   const c = clientObj || {};
+
+  const lang = languageOverride || invoice.language || p.language || 'English';
+  const t = (key) => getText(key, lang);
 
   const currencySetting = p.currency || 'USD - US Dollar';
   const formatMoney = (val) => formatCurrency(val, currencySetting);
@@ -19,7 +23,7 @@ export function generateInvoicePDF(invoice, userProfile, clientObj) {
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(22);
   doc.setFont('helvetica', 'bold');
-  doc.text('INVOICE', 20, 24);
+  doc.text(t('invoiceTitle'), 20, 24);
 
   doc.setFontSize(11);
   doc.setFont('helvetica', 'normal');
@@ -41,8 +45,8 @@ export function generateInvoicePDF(invoice, userProfile, clientObj) {
   let y = 60;
   doc.setFontSize(11);
   doc.setFont('helvetica', 'bold');
-  doc.text('Bill To', 20, y);
-  doc.text('Invoice Details', pageW / 2 + 10, y);
+  doc.text(t('billTo'), 20, y);
+  doc.text(t('invoiceDetails'), pageW / 2 + 10, y);
 
   y += 7;
   doc.setFont('helvetica', 'normal');
@@ -50,16 +54,16 @@ export function generateInvoicePDF(invoice, userProfile, clientObj) {
 
   // Bill To content
   doc.text(invoice.client || c.company || 'Client', 20, y);
-  doc.text('Invoice #:  ' + (invoice.id || ''), pageW / 2 + 10, y);
+  doc.text(`${t('invoiceNo')}  ${invoice.id || ''}`, pageW / 2 + 10, y);
   y += 6;
   if (c.contact) doc.text(c.contact, 20, y);
-  doc.text('Date:  ' + (invoice.created || ''), pageW / 2 + 10, y);
+  doc.text(`${t('date')}  ${invoice.created || ''}`, pageW / 2 + 10, y);
   y += 6;
   if (c.email || invoice.clientEmail) doc.text(c.email || invoice.clientEmail, 20, y);
-  doc.text('Due Date:  ' + (invoice.due || ''), pageW / 2 + 10, y);
+  doc.text(`${t('dueDate')}  ${invoice.due || ''}`, pageW / 2 + 10, y);
   y += 6;
   if (c.country) doc.text(c.country, 20, y);
-  doc.text('Status:  ' + (invoice.status ? invoice.status.toUpperCase() : 'SENT'), pageW / 2 + 10, y);
+  doc.text(`${t('status')}  ${(invoice.status ? invoice.status.toUpperCase() : 'SENT')}`, pageW / 2 + 10, y);
   y += 6;
   if (c.phone) {
     doc.text('Phone: ' + c.phone, 20, y);
@@ -74,10 +78,10 @@ export function generateInvoicePDF(invoice, userProfile, clientObj) {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(9);
   doc.setTextColor(71, 85, 105);
-  doc.text('DESCRIPTION', 24, y + 2);
-  doc.text('QTY', 115, y + 2);
-  doc.text('RATE', 140, y + 2);
-  doc.text('AMOUNT', pageW - 24, y + 2, { align: 'right' });
+  doc.text(t('description'), 24, y + 2);
+  doc.text(t('quantity'), 115, y + 2);
+  doc.text(t('rate'), 140, y + 2);
+  doc.text(t('amount'), pageW - 24, y + 2, { align: 'right' });
 
   // Line items
   y += 12;
@@ -111,18 +115,18 @@ export function generateInvoicePDF(invoice, userProfile, clientObj) {
   const rightCol = pageW - 24;
   doc.setFontSize(10);
 
-  doc.text('Subtotal:', rightCol - 65, y);
+  doc.text(`${t('subtotal')}`, rightCol - 65, y);
   doc.text(formatMoney(invoice.subtotal || invoice.amount), rightCol, y, { align: 'right' });
   y += 7;
 
   if (Number(invoice.discount) > 0) {
-    doc.text(`Discount (${invoice.discount}%):`, rightCol - 65, y);
+    doc.text(`${t('discount')} (${invoice.discount}%):`, rightCol - 65, y);
     doc.text('-' + formatMoney(invoice.discountAmount), rightCol, y, { align: 'right' });
     y += 7;
   }
 
   if (Number(invoice.tax) > 0 || Number(invoice.taxAmount) > 0) {
-    doc.text(`Tax (${invoice.tax || 18}%):`, rightCol - 65, y);
+    doc.text(`${t('tax')} (${invoice.tax || 18}%):`, rightCol - 65, y);
     doc.text(formatMoney(invoice.taxAmount), rightCol, y, { align: 'right' });
     y += 7;
   }
@@ -136,7 +140,7 @@ export function generateInvoicePDF(invoice, userProfile, clientObj) {
   doc.setFontSize(13);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(37, 99, 235);
-  doc.text('Total:', rightCol - 65, y);
+  doc.text(`${t('total')}`, rightCol - 65, y);
   doc.text(formatMoney(invoice.amount), rightCol, y, { align: 'right' });
 
   // Notes and terms
@@ -145,7 +149,7 @@ export function generateInvoicePDF(invoice, userProfile, clientObj) {
     doc.setFontSize(10);
     doc.setFont('helvetica', 'bold');
     y += 18;
-    doc.text('Notes / Payment Terms:', 20, y);
+    doc.text(t('notes'), 20, y);
     doc.setFont('helvetica', 'normal');
     y += 6;
     const lines = doc.splitTextToSize(invoice.notes, pageW - 40);
@@ -155,8 +159,8 @@ export function generateInvoicePDF(invoice, userProfile, clientObj) {
   // Footer Branding
   doc.setFontSize(8);
   doc.setTextColor(148, 163, 184);
-  doc.text('Generated by AutoInvoice', pageW / 2, pageH - 12, { align: 'center' });
+  doc.text(`${t('generatedBy')} (${lang})`, pageW / 2, pageH - 12, { align: 'center' });
 
   // Trigger Save
-  doc.save(`${invoice.id || 'Invoice'}.pdf`);
+  doc.save(`${invoice.id || 'Invoice'}_${lang}.pdf`);
 }

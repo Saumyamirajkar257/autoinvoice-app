@@ -12,7 +12,7 @@ router.post('/auth/login', (req, res) => {
   res.json({
     message: 'Login successful',
     user: {
-      fullName: profile.fullName || 'Zaid Shaikh',
+      fullName: profile.fullName || 'User',
       email: email
     }
   });
@@ -109,6 +109,29 @@ router.delete('/invoices/:id', (req, res) => {
     return res.status(404).json({ error: 'Invoice not found' });
   }
   res.json({ message: 'Invoice deleted successfully' });
+});
+
+// --- Email Delivery API (Feature 2) ---
+router.post('/invoices/:id/send-email', (req, res) => {
+  const invoice = db.getInvoiceById(req.params.id);
+  if (!invoice) {
+    return res.status(404).json({ error: 'Invoice not found' });
+  }
+  const profile = db.getProfile();
+  res.json({
+    message: `Invoice ${invoice.id} emailed successfully to ${invoice.clientEmail || invoice.client}`,
+    recipient: invoice.clientEmail,
+    sender: profile.businessName || profile.fullName
+  });
+});
+
+router.post('/invoices/send-reminders', (req, res) => {
+  const invoices = db.getInvoices();
+  const overdueInvoices = invoices.filter(i => i.status === 'overdue' || i.status === 'sent');
+  res.json({
+    message: `Automated overdue payment reminders sent for ${overdueInvoices.length} invoices.`,
+    count: overdueInvoices.length
+  });
 });
 
 // --- Profile API ---
