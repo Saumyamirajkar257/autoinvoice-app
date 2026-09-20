@@ -10,7 +10,7 @@ export default function Profile({ userProfile, onRefresh, showToast }) {
   const [phone, setPhone] = useState('');
   const [website, setWebsite] = useState('');
   const [taxId, setTaxId] = useState('');
-  const [currency, setCurrency] = useState('USD - US Dollar');
+  const [currency, setCurrency] = useState('INR - Indian Rupee');
   const [language, setLanguage] = useState('English');
   const [logo, setLogo] = useState('');
   const [saving, setSaving] = useState(false);
@@ -24,7 +24,7 @@ export default function Profile({ userProfile, onRefresh, showToast }) {
       setPhone(userProfile.phone || '');
       setWebsite(userProfile.website || '');
       setTaxId(userProfile.taxId || '');
-      setCurrency(userProfile.currency || 'USD - US Dollar');
+      setCurrency(userProfile.currency || 'INR - Indian Rupee');
       setLanguage(userProfile.language || 'English');
       setLogo(userProfile.logo || '');
     }
@@ -72,7 +72,7 @@ export default function Profile({ userProfile, onRefresh, showToast }) {
       <div className="page-header">
         <div>
           <h1 className="page-title">Profile</h1>
-          <p className="page-subtitle">Manage your business profile, default currency, and PDF template language.</p>
+          <p className="page-subtitle">Manage your business profile, default currency (INR primary), and PDF template language.</p>
         </div>
       </div>
 
@@ -227,16 +227,18 @@ export default function Profile({ userProfile, onRefresh, showToast }) {
           {/* Default Currency & Language Settings */}
           <div className="form-row-2">
             <div className="form-group">
-              <label className="form-label">Default Currency</label>
+              <label className="form-label">Default Currency (Primary: INR)</label>
               <select
                 className="form-select"
                 value={currency}
                 onChange={(e) => setCurrency(e.target.value)}
               >
+                <option value="INR - Indian Rupee">INR - Indian Rupee (₹) [Default]</option>
                 <option value="USD - US Dollar">USD - US Dollar ($)</option>
-                <option value="INR - Indian Rupee">INR - Indian Rupee (₹)</option>
                 <option value="EUR - Euro">EUR - Euro (€)</option>
                 <option value="GBP - British Pound">GBP - British Pound (£)</option>
+                <option value="CAD - Canadian Dollar">CAD - Canadian Dollar (CA$)</option>
+                <option value="AUD - Australian Dollar">AUD - Australian Dollar (A$)</option>
               </select>
             </div>
 

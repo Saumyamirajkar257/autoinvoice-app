@@ -1,12 +1,12 @@
 export const CURRENCY_SYMBOLS = {
-  'USD - US Dollar': '$',
   'INR - Indian Rupee': '₹',
+  'USD - US Dollar': '$',
   'EUR - Euro': '€',
   'GBP - British Pound': '£',
   'CAD - Canadian Dollar': 'CA$',
   'AUD - Australian Dollar': 'A$',
-  'USD': '$',
   'INR': '₹',
+  'USD': '$',
   'EUR': '€',
   'GBP': '£',
   'CAD': 'CA$',
@@ -24,24 +24,25 @@ export const EXCHANGE_RATES_USD = {
 };
 
 export function getCurrencyCode(currencyString) {
-  if (!currencyString) return 'USD';
-  if (currencyString.includes('INR')) return 'INR';
+  if (!currencyString) return 'INR';
+  if (currencyString.includes('USD')) return 'USD';
   if (currencyString.includes('EUR')) return 'EUR';
   if (currencyString.includes('GBP')) return 'GBP';
   if (currencyString.includes('CAD')) return 'CAD';
   if (currencyString.includes('AUD')) return 'AUD';
-  return 'USD';
+  if (currencyString.includes('INR')) return 'INR';
+  return 'INR';
 }
 
 export function getCurrencySymbol(currencyString) {
   const code = getCurrencyCode(currencyString);
-  return CURRENCY_SYMBOLS[code] || '$';
+  return CURRENCY_SYMBOLS[code] || '₹';
 }
 
 export function formatCurrency(amount, currencyString) {
   const symbol = getCurrencySymbol(currencyString);
   const num = Number(amount || 0);
-  const formattedNumber = num.toLocaleString('en-US', {
+  const formattedNumber = num.toLocaleString('en-IN', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   });
@@ -50,7 +51,7 @@ export function formatCurrency(amount, currencyString) {
 
 export function convertCurrency(amount, fromCurrencyString, toCurrencyCode) {
   const fromCode = getCurrencyCode(fromCurrencyString);
-  const fromRate = EXCHANGE_RATES_USD[fromCode] || 1.0;
+  const fromRate = EXCHANGE_RATES_USD[fromCode] || 83.50;
   const toRate = EXCHANGE_RATES_USD[toCurrencyCode] || 1.0;
 
   // Convert to USD then to target currency

@@ -8,11 +8,11 @@ import { formatCurrency, getCurrencySymbol, convertCurrency, getCurrencyCode } f
 export default function CreateInvoice({ clients, onRefresh, showToast, userProfile }) {
   const navigate = useNavigate();
 
-  // Form state
+  // Form state - Default currency set to INR (Indian Rupee) as top priority
   const [selectedClient, setSelectedClient] = useState('');
   const [dueDate, setDueDate] = useState('2025-10-18');
   const [language, setLanguage] = useState(userProfile?.language || 'English');
-  const [currency, setCurrency] = useState(userProfile?.currency || 'USD - US Dollar');
+  const [currency, setCurrency] = useState(userProfile?.currency || 'INR - Indian Rupee');
   const [items, setItems] = useState([
     { id: 1, description: '', quantity: 1, rate: 0 }
   ]);
@@ -28,7 +28,7 @@ export default function CreateInvoice({ clients, onRefresh, showToast, userProfi
     }
   }, [clients]);
 
-  // Sync user profile currency default when profile loads
+  // Sync user profile currency default when profile loads if specified
   useEffect(() => {
     if (userProfile?.currency) {
       setCurrency(userProfile.currency);
@@ -38,7 +38,7 @@ export default function CreateInvoice({ clients, onRefresh, showToast, userProfi
   // Adjust tax rate based on business/client country
   useEffect(() => {
     const clientObj = clients.find(c => c.company === selectedClient);
-    if (clientObj?.country === 'India' || userProfile?.country === 'India') {
+    if (clientObj?.country === 'India' || userProfile?.country === 'India' || !userProfile?.country) {
       setTaxRate(18); // India GST standard
     } else {
       setTaxRate(18); // Default standard
@@ -57,14 +57,15 @@ export default function CreateInvoice({ clients, onRefresh, showToast, userProfi
   const taxAmount = (taxable * (Number(taxRate) || 0)) / 100;
   const total = taxable + taxAmount;
 
-  const formatMoney = (val) => formatCurrency(val, currency);
-  const currencySymbol = getCurrencySymbol(currency);
-  const currencyCode = getCurrencyCode(currency);
+  const activeCurrency = currency || 'INR - Indian Rupee';
+  const formatMoney = (val) => formatCurrency(val, activeCurrency);
+  const currencySymbol = getCurrencySymbol(activeCurrency);
+  const currencyCode = getCurrencyCode(activeCurrency);
 
-  // Live FX Conversions
-  const fxConversions = ['USD', 'INR', 'EUR', 'GBP', 'CAD', 'AUD']
+  // Live FX Conversions (Priority order: INR, USD, EUR, GBP, CAD)
+  const fxConversions = ['INR', 'USD', 'EUR', 'GBP', 'CAD']
     .filter(c => c !== currencyCode)
-    .map(c => convertCurrency(total, currency, c));
+    .map(c => convertCurrency(total, activeCurrency, c));
 
   // Item row operations
   const addItemRow = () => {
@@ -114,7 +115,7 @@ export default function CreateInvoice({ clients, onRefresh, showToast, userProfi
         clientEmail: recipientEmail,
         due: dueDate || 'Not set',
         language: language,
-        currency: currency,
+        currency: activeCurrency,
         description: validItems[0].description,
         items: validItems.map(item => ({
           description: item.description,
@@ -134,7 +135,7 @@ export default function CreateInvoice({ clients, onRefresh, showToast, userProfi
       onRefresh();
 
       // 1. Automatic PDF Download to user device
-      generateInvoicePDF(createdInvoice, userProfile, clientObj, language, currency);
+      generateInvoicePDF(createdInvoice, userProfile, clientObj, language, activeCurrency);
 
       // 2. Automatic Email Delivery to client's email/gmail
       showToast(`Invoice ${createdInvoice.id} downloaded as PDF and emailed to ${recipientEmail}!`, 'success');
@@ -157,7 +158,7 @@ export default function CreateInvoice({ clients, onRefresh, showToast, userProfi
           </button>
           <div>
             <h1 className="page-title">Create Invoice</h1>
-            <p className="page-subtitle">Creates invoice, auto-downloads PDF & emails client directly.</p>
+            <p className="page-subtitle">Creates invoice in your chosen currency (INR primary), auto-downloads PDF & emails client.</p>
           </div>
         </div>
       </div>
@@ -205,15 +206,15 @@ export default function CreateInvoice({ clients, onRefresh, showToast, userProfi
               <div className="form-group" style={{ margin: 0 }}>
                 <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                   <DollarSign size={14} color="#16a34a" />
-                  Invoice Currency
+                  Invoice Currency (Primary: INR)
                 </label>
                 <select
                   className="form-select"
                   value={currency}
                   onChange={(e) => setCurrency(e.target.value)}
                 >
+                  <option value="INR - Indian Rupee">INR - Indian Rupee (₹) [Default]</option>
                   <option value="USD - US Dollar">USD - US Dollar ($)</option>
-                  <option value="INR - Indian Rupee">INR - Indian Rupee (₹)</option>
                   <option value="EUR - Euro">EUR - Euro (€)</option>
                   <option value="GBP - British Pound">GBP - British Pound (£)</option>
                   <option value="CAD - Canadian Dollar">CAD - Canadian Dollar (CA$)</option>
@@ -419,7 +420,7 @@ export default function CreateInvoice({ clients, onRefresh, showToast, userProfi
                 disabled={saving}
               >
                 <Send size={16} />
-                {saving ? 'Creating & Sending...' : 'Create, Download & Email Client'}
+                {saving ? 'Creating & Sending...' : `Create, Download & Email (${currencySymbol})`}
               </button>
             </div>
           </div>
