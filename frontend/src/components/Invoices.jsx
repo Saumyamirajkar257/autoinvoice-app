@@ -12,7 +12,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { generateInvoicePDF } from './pdfGenerator';
 import { formatCurrency } from '../utils/currency';
-import { sendInvoiceEmailViaMailto } from '../utils/emailService';
+import { sendRealInvoiceEmail } from '../utils/emailService';
 
 export default function Invoices({ invoices, onRefresh, showToast, userProfile, clients }) {
   const navigate = useNavigate();
@@ -64,31 +64,35 @@ export default function Invoices({ invoices, onRefresh, showToast, userProfile, 
 
     setSendingEmail(invoice.id);
     try {
-      sendInvoiceEmailViaMailto(invoice, userProfile, clientObj);
-      showToast(`Email composer opened for ${email} with invoice ${invoice.id}!`, 'success');
+      showToast(`Sending invoice email to ${email}...`, 'info');
+      const res = await sendRealInvoiceEmail(invoice, userProfile, clientObj);
+      showToast(`Real email dispatched directly to ${email}!`, 'success');
     } catch (err) {
-      showToast('Failed to prepare email: ' + err.message, 'error');
+      showToast('Failed to send email: ' + err.message, 'error');
     } finally {
       setSendingEmail(null);
     }
   };
 
-  const handleSendOverdueReminders = () => {
+  const handleSendOverdueReminders = async () => {
     const overdueInvoices = invoices.filter(i => (i.status || '').toLowerCase() === 'overdue' || (i.status || '').toLowerCase() === 'sent');
     if (overdueInvoices.length === 0) {
       showToast('No pending or overdue invoices found to remind.', 'info');
       return;
     }
 
-    // Launch email composer for the first overdue invoice
-    const firstOverdue = overdueInvoices[0];
-    const clientObj = clients.find(c => c.company === firstOverdue.client);
-    try {
-      sendInvoiceEmailViaMailto(firstOverdue, userProfile, clientObj);
-      showToast(`Payment reminder email composed for ${firstOverdue.client} (${overdueInvoices.length} pending)!`, 'success');
-    } catch (err) {
-      showToast(`Automated payment reminders triggered for ${overdueInvoices.length} invoices!`, 'info');
+    showToast(`Sending payment reminders for ${overdueInvoices.length} invoices...`, 'info');
+    let sentCount = 0;
+    for (const inv of overdueInvoices) {
+      const clientObj = clients.find(c => c.company === inv.client);
+      try {
+        await sendRealInvoiceEmail(inv, userProfile, clientObj);
+        sentCount++;
+      } catch (e) {
+        console.warn('Reminder email error for', inv.id, e);
+      }
     }
+    showToast(`Real payment reminder emails dispatched to ${sentCount} clients!`, 'success');
   };
 
   // Filtering
