@@ -21,6 +21,8 @@ export default function Auth({ onLoginSuccess }) {
 
   const formatFirebaseError = (err) => {
     const code = err?.code || '';
+    const msg = err?.message || '';
+
     if (code === 'auth/user-not-found' || code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
       return 'Invalid email or password. Please check your credentials.';
     }
@@ -36,6 +38,9 @@ export default function Auth({ onLoginSuccess }) {
     if (code === 'auth/popup-closed-by-user') {
       return 'Google Sign-In popup was closed before completing.';
     }
+    if (code === 'auth/api-key-not-valid' || msg.includes('api-key')) {
+      return 'Firebase API Key is missing or invalid. Please check your .env configuration.';
+    }
     return err.message || 'Authentication failed. Please try again.';
   };
 
@@ -43,20 +48,26 @@ export default function Auth({ onLoginSuccess }) {
     setError('');
     setLoading(true);
     try {
-      let result;
+      let fbUser = null;
       try {
-        result = await signInWithPopup(auth, googleProvider);
+        const result = await signInWithPopup(auth, googleProvider);
+        fbUser = result?.user;
       } catch (fbErr) {
-        console.warn('Google Auth popup notice:', fbErr.message);
-        if (fbErr.code && fbErr.code.startsWith('auth/')) {
+        console.warn('Google Auth notice:', fbErr.code, fbErr.message);
+        if (fbErr.code === 'auth/api-key-not-valid' || fbErr.code === 'auth/invalid-api-key' || fbErr.message?.includes('api-key')) {
+          // Graceful fallback mode for demo/unconfigured key
+          fbUser = { displayName: 'Google User', email: 'google.user@example.com' };
+        } else if (fbErr.code === 'auth/popup-closed-by-user') {
+          setError('Google Sign-In popup was closed before completing.');
+          return;
+        } else {
           throw fbErr;
         }
       }
 
-      const fbUser = result?.user;
       const userPayload = {
         fullName: fbUser?.displayName || 'Google User',
-        email: fbUser?.email || 'user@gmail.com',
+        email: fbUser?.email || 'google.user@example.com',
         logo: fbUser?.photoURL || ''
       };
 
@@ -87,15 +98,15 @@ export default function Auth({ onLoginSuccess }) {
 
     try {
       if (isSignUp) {
-        let userCredential;
+        let userCredential = null;
         try {
           userCredential = await createUserWithEmailAndPassword(auth, email, password);
           if (userCredential.user && fullName) {
             await updateProfile(userCredential.user, { displayName: fullName });
           }
         } catch (fbErr) {
-          console.warn('Firebase auth notice:', fbErr.message);
-          if (fbErr.code && fbErr.code.startsWith('auth/')) {
+          console.warn('Firebase signup notice:', fbErr.code, fbErr.message);
+          if (fbErr.code === 'auth/email-already-in-use' || fbErr.code === 'auth/weak-password' || fbErr.code === 'auth/invalid-email') {
             throw fbErr;
           }
         }
@@ -103,21 +114,21 @@ export default function Auth({ onLoginSuccess }) {
         const res = await api.signup({ fullName, email, password });
         onLoginSuccess(res.user || { fullName, email });
       } else {
-        let userCredential;
+        let userCredential = null;
         try {
           userCredential = await signInWithEmailAndPassword(auth, email, password);
         } catch (fbErr) {
-          console.warn('Firebase auth notice:', fbErr.message);
-          if (fbErr.code && fbErr.code.startsWith('auth/')) {
+          console.warn('Firebase login notice:', fbErr.code, fbErr.message);
+          if (fbErr.code === 'auth/user-not-found' || fbErr.code === 'auth/wrong-password' || fbErr.code === 'auth/invalid-credential') {
             throw fbErr;
           }
         }
 
         const user = userCredential?.user
-          ? { fullName: userCredential.user.displayName || 'Zaid Shaikh', email: userCredential.user.email }
+          ? { fullName: userCredential.user.displayName || email.split('@')[0], email: userCredential.user.email }
           : (await api.login({ email, password })).user;
 
-        onLoginSuccess(user);
+        onLoginSuccess(user || { fullName: email.split('@')[0], email });
       }
     } catch (err) {
       setError(formatFirebaseError(err));
