@@ -47,13 +47,13 @@ const DEFAULT_INVOICES = [
 ];
 
 const DEFAULT_USER = {
-  fullName: 'Zaid Shaikh',
-  email: 'zaid@example.com',
-  businessName: "Zaid Shaikh's Business",
-  address: 'Please update your business address',
+  fullName: '',
+  email: '',
+  businessName: '',
+  address: '',
   country: 'India',
-  phone: '9999999999',
-  website: 'https://google.com',
+  phone: '',
+  website: '',
   taxId: '',
   currency: 'USD - US Dollar',
   logo: ''
@@ -251,7 +251,7 @@ export async function apiRequest(endpoint, options = {}) {
       try {
         data = JSON.parse(text);
       } catch (jsonErr) {
-        // Ignored, handled below
+        // Ignored
       }
     }
 

@@ -31,10 +31,19 @@ import Settings from './components/Settings';
 
 export default function App() {
   const navigate = useNavigate();
-  const [currentUser, setCurrentUser] = useState({
-    fullName: 'Zaid Shaikh',
-    email: 'zaid@example.com'
+
+  // Initialize currentUser from persistent active session or null
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const isLoggedOut = localStorage.getItem('autoinvoice_logged_out') === 'true';
+      if (isLoggedOut) return null;
+      const s = localStorage.getItem('autoinvoice_session_user');
+      return s ? JSON.parse(s) : null;
+    } catch (e) {
+      return null;
+    }
   });
+
   const [stats, setStats] = useState(null);
   const [clients, setClients] = useState([]);
   const [invoices, setInvoices] = useState([]);
@@ -45,11 +54,17 @@ export default function App() {
   // Subscribe to Firebase Auth state
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (fbUser) => {
-      if (fbUser) {
-        setCurrentUser({
-          fullName: fbUser.displayName || fbUser.email?.split('@')[0] || 'Zaid Shaikh',
-          email: fbUser.email
-        });
+      const isLoggedOut = localStorage.getItem('autoinvoice_logged_out') === 'true';
+      if (fbUser && !isLoggedOut) {
+        const userObj = {
+          fullName: fbUser.displayName || fbUser.email?.split('@')[0] || 'User',
+          email: fbUser.email,
+          photoURL: fbUser.photoURL || ''
+        };
+        setCurrentUser(userObj);
+        localStorage.setItem('autoinvoice_session_user', JSON.stringify(userObj));
+      } else if (!currentUser) {
+        setCurrentUser(null);
       }
     });
     return () => unsubscribe();
@@ -81,7 +96,7 @@ export default function App() {
       if (profileData) {
         setUserProfile(profileData);
         if (profileData.fullName) {
-          setCurrentUser((prev) => ({ ...prev, fullName: profileData.fullName }));
+          setCurrentUser((prev) => (prev ? { ...prev, fullName: profileData.fullName } : prev));
         }
       }
     } catch (err) {
@@ -99,6 +114,8 @@ export default function App() {
   }, [currentUser]);
 
   const handleLoginSuccess = (user) => {
+    localStorage.removeItem('autoinvoice_logged_out');
+    localStorage.setItem('autoinvoice_session_user', JSON.stringify(user));
     setCurrentUser(user);
     navigate('/dashboard');
     showToast(`Welcome back, ${user.fullName || 'User'}!`, 'success');
@@ -110,7 +127,11 @@ export default function App() {
     } catch (e) {
       console.warn('Signout note:', e.message);
     }
+    localStorage.setItem('autoinvoice_logged_out', 'true');
+    localStorage.removeItem('autoinvoice_session_user');
+    localStorage.removeItem('autoinvoice_user');
     setCurrentUser(null);
+    setUserProfile({});
     showToast('Logged out successfully', 'info');
   };
 
@@ -131,7 +152,7 @@ export default function App() {
   }
 
   const getInitials = (name) => {
-    if (!name) return 'ZS';
+    if (!name) return 'U';
     const parts = name.trim().split(' ');
     if (parts.length >= 2) {
       return (parts[0][0] + parts[1][0]).toUpperCase();
@@ -233,10 +254,18 @@ export default function App() {
             title="View Profile"
           >
             <div className="avatar">
-              {getInitials(userProfile?.fullName || currentUser.fullName)}
+              {currentUser?.photoURL ? (
+                <img
+                  src={currentUser.photoURL}
+                  alt="User avatar"
+                  style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }}
+                />
+              ) : (
+                getInitials(userProfile?.fullName || currentUser?.fullName)
+              )}
             </div>
             <span className="user-name">
-              {userProfile?.fullName || currentUser.fullName || 'Zaid Shaikh'}
+              {userProfile?.fullName || currentUser?.fullName || currentUser?.email || 'User'}
             </span>
           </div>
         </header>
