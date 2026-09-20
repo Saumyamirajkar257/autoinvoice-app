@@ -1,14 +1,14 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 
-// Real active Firebase configuration
+// Firebase configuration for invoice-project-63aba
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyCcNv873lNfULk0noSXn-MC1E1BhBc6y-0",
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "life-os-app-2026.firebaseapp.com",
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "life-os-app-2026",
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "life-os-app-2026.firebasestorage.app",
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "531059756717",
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:531059756717:web:8f5695382e72a6ce180024"
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "invoice-project-63aba.firebaseapp.com",
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "invoice-project-63aba",
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "invoice-project-63aba.firebasestorage.app",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "349827776143",
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:349827776143:web:autoinvoice"
 };
 
 // Initialize Firebase
