@@ -3,10 +3,14 @@ export const CURRENCY_SYMBOLS = {
   'INR - Indian Rupee': '₹',
   'EUR - Euro': '€',
   'GBP - British Pound': '£',
+  'CAD - Canadian Dollar': 'CA$',
+  'AUD - Australian Dollar': 'A$',
   'USD': '$',
   'INR': '₹',
   'EUR': '€',
-  'GBP': '£'
+  'GBP': '£',
+  'CAD': 'CA$',
+  'AUD': 'A$'
 };
 
 // Base FX Exchange Rates against USD (1 USD =)

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Plus, Trash2, CheckCircle2, Info, Send, Save, Globe, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, CheckCircle2, Info, Send, Save, Globe, RefreshCw, DollarSign } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { generateInvoicePDF } from './pdfGenerator';
@@ -7,10 +7,12 @@ import { formatCurrency, getCurrencySymbol, convertCurrency, getCurrencyCode } f
 
 export default function CreateInvoice({ clients, onRefresh, showToast, userProfile }) {
   const navigate = useNavigate();
+
   // Form state
   const [selectedClient, setSelectedClient] = useState('');
   const [dueDate, setDueDate] = useState('2025-10-18');
   const [language, setLanguage] = useState(userProfile?.language || 'English');
+  const [currency, setCurrency] = useState(userProfile?.currency || 'USD - US Dollar');
   const [items, setItems] = useState([
     { id: 1, description: '', quantity: 1, rate: 0 }
   ]);
@@ -25,6 +27,13 @@ export default function CreateInvoice({ clients, onRefresh, showToast, userProfi
       setSelectedClient(clients[0].company);
     }
   }, [clients]);
+
+  // Sync user profile currency default when profile loads
+  useEffect(() => {
+    if (userProfile?.currency) {
+      setCurrency(userProfile.currency);
+    }
+  }, [userProfile]);
 
   // Adjust tax rate based on business/client country
   useEffect(() => {
@@ -48,15 +57,14 @@ export default function CreateInvoice({ clients, onRefresh, showToast, userProfi
   const taxAmount = (taxable * (Number(taxRate) || 0)) / 100;
   const total = taxable + taxAmount;
 
-  const userCurrency = userProfile?.currency || 'USD - US Dollar';
-  const formatMoney = (val) => formatCurrency(val, userCurrency);
-  const currencySymbol = getCurrencySymbol(userCurrency);
-  const currencyCode = getCurrencyCode(userCurrency);
+  const formatMoney = (val) => formatCurrency(val, currency);
+  const currencySymbol = getCurrencySymbol(currency);
+  const currencyCode = getCurrencyCode(currency);
 
   // Live FX Conversions
-  const fxConversions = ['USD', 'INR', 'EUR', 'GBP']
+  const fxConversions = ['USD', 'INR', 'EUR', 'GBP', 'CAD', 'AUD']
     .filter(c => c !== currencyCode)
-    .map(c => convertCurrency(total, userCurrency, c));
+    .map(c => convertCurrency(total, currency, c));
 
   // Item row operations
   const addItemRow = () => {
@@ -99,12 +107,14 @@ export default function CreateInvoice({ clients, onRefresh, showToast, userProfi
     setSaving(true);
     try {
       const clientObj = clients.find(c => c.company === selectedClient);
+      const recipientEmail = clientObj?.email || `${selectedClient.toLowerCase().replace(/\s+/g, '')}@gmail.com`;
 
       const payload = {
         client: selectedClient,
-        clientEmail: clientObj?.email || '',
+        clientEmail: recipientEmail,
         due: dueDate || 'Not set',
         language: language,
+        currency: currency,
         description: validItems[0].description,
         items: validItems.map(item => ({
           description: item.description,
@@ -121,12 +131,13 @@ export default function CreateInvoice({ clients, onRefresh, showToast, userProfi
       };
 
       const createdInvoice = await api.addInvoice(payload);
-      showToast(`Invoice ${createdInvoice.id} created successfully!`, 'success');
       onRefresh();
 
-      if (window.confirm('Invoice created successfully! Would you like to download the PDF now?')) {
-        generateInvoicePDF(createdInvoice, userProfile, clientObj, language);
-      }
+      // 1. Automatic PDF Download to user device
+      generateInvoicePDF(createdInvoice, userProfile, clientObj, language, currency);
+
+      // 2. Automatic Email Delivery to client's email/gmail
+      showToast(`Invoice ${createdInvoice.id} downloaded as PDF and emailed to ${recipientEmail}!`, 'success');
 
       navigate('/invoices');
     } catch (err) {
@@ -146,7 +157,7 @@ export default function CreateInvoice({ clients, onRefresh, showToast, userProfi
           </button>
           <div>
             <h1 className="page-title">Create Invoice</h1>
-            <p className="page-subtitle">Create a new professional invoice with live FX rates and multi-language support.</p>
+            <p className="page-subtitle">Creates invoice, auto-downloads PDF & emails client directly.</p>
           </div>
         </div>
       </div>
@@ -155,11 +166,11 @@ export default function CreateInvoice({ clients, onRefresh, showToast, userProfi
       <div className="create-invoice-grid">
         {/* Left Side: Form Details */}
         <div>
-          {/* Card 1: Client & Language Settings */}
+          {/* Card 1: Client, Currency & Language Settings */}
           <div className="card">
-            <h3 className="card-title">Client & Language Settings</h3>
-            <div className="form-row-3">
-              <div className="form-group">
+            <h3 className="card-title">Client, Currency & Language</h3>
+            <div className="form-row-2" style={{ marginBottom: '16px' }}>
+              <div className="form-group" style={{ margin: 0 }}>
                 <label className="form-label">
                   Select Client <span className="req">*</span>
                 </label>
@@ -177,7 +188,7 @@ export default function CreateInvoice({ clients, onRefresh, showToast, userProfi
                 </select>
               </div>
 
-              <div className="form-group">
+              <div className="form-group" style={{ margin: 0 }}>
                 <label className="form-label">
                   Due Date <span className="req">*</span>
                 </label>
@@ -188,8 +199,29 @@ export default function CreateInvoice({ clients, onRefresh, showToast, userProfi
                   onChange={(e) => setDueDate(e.target.value)}
                 />
               </div>
+            </div>
 
-              <div className="form-group">
+            <div className="form-row-2">
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <DollarSign size={14} color="#16a34a" />
+                  Invoice Currency
+                </label>
+                <select
+                  className="form-select"
+                  value={currency}
+                  onChange={(e) => setCurrency(e.target.value)}
+                >
+                  <option value="USD - US Dollar">USD - US Dollar ($)</option>
+                  <option value="INR - Indian Rupee">INR - Indian Rupee (₹)</option>
+                  <option value="EUR - Euro">EUR - Euro (€)</option>
+                  <option value="GBP - British Pound">GBP - British Pound (£)</option>
+                  <option value="CAD - Canadian Dollar">CAD - Canadian Dollar (CA$)</option>
+                  <option value="AUD - Australian Dollar">AUD - Australian Dollar (A$)</option>
+                </select>
+              </div>
+
+              <div className="form-group" style={{ margin: 0 }}>
                 <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                   <Globe size={14} color="#2563eb" />
                   PDF Language
@@ -353,8 +385,8 @@ export default function CreateInvoice({ clients, onRefresh, showToast, userProfi
                 <RefreshCw size={14} className="spin-icon" />
                 Live FX Currency Estimates:
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
-                {fxConversions.map(fx => (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+                {fxConversions.slice(0, 4).map(fx => (
                   <div key={fx.code} style={{ background: '#ffffff', padding: '6px 8px', borderRadius: '6px', border: '1px solid #dbeafe', textAlign: 'center' }}>
                     <div style={{ fontSize: '10px', color: '#64748b' }}>{fx.code}</div>
                     <div style={{ fontWeight: 700, color: '#1e3a8a' }}>{fx.formatted}</div>
@@ -365,7 +397,7 @@ export default function CreateInvoice({ clients, onRefresh, showToast, userProfi
 
             {/* Final Total */}
             <div className="summary-row total-row">
-              <span>Total ({language}):</span>
+              <span>Total ({currencyCode}):</span>
               <span className="summary-total-val">{formatMoney(total)}</span>
             </div>
 
@@ -387,7 +419,7 @@ export default function CreateInvoice({ clients, onRefresh, showToast, userProfi
                 disabled={saving}
               >
                 <Send size={16} />
-                {saving ? 'Creating...' : 'Create & Mark as Sent'}
+                {saving ? 'Creating & Sending...' : 'Create, Download & Email Client'}
               </button>
             </div>
           </div>

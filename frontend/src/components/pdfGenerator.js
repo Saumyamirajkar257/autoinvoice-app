@@ -2,7 +2,7 @@ import { jsPDF } from 'jspdf';
 import { formatCurrency } from '../utils/currency';
 import { getText } from '../utils/languages';
 
-export function generateInvoicePDF(invoice, userProfile, clientObj, languageOverride) {
+export function generateInvoicePDF(invoice, userProfile, clientObj, languageOverride, currencyOverride) {
   const doc = new jsPDF();
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
@@ -12,7 +12,7 @@ export function generateInvoicePDF(invoice, userProfile, clientObj, languageOver
   const lang = languageOverride || invoice.language || p.language || 'English';
   const t = (key) => getText(key, lang);
 
-  const currencySetting = p.currency || 'USD - US Dollar';
+  const currencySetting = currencyOverride || invoice.currency || p.currency || 'USD - US Dollar';
   const formatMoney = (val) => formatCurrency(val, currencySetting);
 
   // Top header banner background (Primary Blue)
@@ -161,6 +161,7 @@ export function generateInvoicePDF(invoice, userProfile, clientObj, languageOver
   doc.setTextColor(148, 163, 184);
   doc.text(`${t('generatedBy')} (${lang})`, pageW / 2, pageH - 12, { align: 'center' });
 
-  // Trigger Save
+  // Trigger Save PDF
   doc.save(`${invoice.id || 'Invoice'}_${lang}.pdf`);
+  return doc;
 }
