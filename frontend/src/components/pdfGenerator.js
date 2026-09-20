@@ -12,7 +12,7 @@ export function generateInvoicePDF(invoice, userProfile, clientObj, languageOver
   const lang = languageOverride || invoice.language || p.language || 'English';
   const t = (key) => getText(key, lang);
 
-  const currencySetting = currencyOverride || invoice.currency || p.currency || 'USD - US Dollar';
+  const currencySetting = currencyOverride || invoice.currency || p.currency || 'INR - Indian Rupee';
   const formatMoney = (val) => formatCurrency(val, currencySetting);
 
   // Top header banner background (Primary Blue)

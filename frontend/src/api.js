@@ -55,7 +55,7 @@ const DEFAULT_USER = {
   phone: '',
   website: '',
   taxId: '',
-  currency: 'USD - US Dollar',
+  currency: 'INR - Indian Rupee',
   logo: ''
 };
 
@@ -167,6 +167,8 @@ function handleFallback(endpoint, options = {}) {
         status: body.status || 'sent',
         created: formattedCreated,
         due: body.due || 'Not set',
+        language: body.language || 'English',
+        currency: body.currency || 'INR - Indian Rupee',
         description: items[0]?.description || body.description || '',
         items: items,
         quantity: items[0]?.quantity || 1,

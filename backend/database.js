@@ -74,7 +74,7 @@ const DEFAULT_USER = {
   phone: '',
   website: '',
   taxId: '',
-  currency: 'USD - US Dollar',
+  currency: 'INR - Indian Rupee',
   logo: ''
 };
 
@@ -185,6 +185,8 @@ const db = {
       status: data.status || 'sent',
       created: formattedCreated,
       due: data.due || 'Not set',
+      language: data.language || 'English',
+      currency: data.currency || 'INR - Indian Rupee',
       description: items[0]?.description || data.description || '',
       items: items,
       quantity: items[0]?.quantity || 1,

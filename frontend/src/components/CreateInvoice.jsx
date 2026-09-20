@@ -28,12 +28,14 @@ export default function CreateInvoice({ clients, onRefresh, showToast, userProfi
     }
   }, [clients]);
 
-  // Sync user profile currency default when profile loads if specified
+  const [userSelectedCurrency, setUserSelectedCurrency] = useState(false);
+
+  // Sync user profile currency default on initial load if not manually changed
   useEffect(() => {
-    if (userProfile?.currency) {
+    if (userProfile?.currency && !userSelectedCurrency) {
       setCurrency(userProfile.currency);
     }
-  }, [userProfile]);
+  }, [userProfile, userSelectedCurrency]);
 
   // Adjust tax rate based on business/client country
   useEffect(() => {
@@ -211,7 +213,10 @@ export default function CreateInvoice({ clients, onRefresh, showToast, userProfi
                 <select
                   className="form-select"
                   value={currency}
-                  onChange={(e) => setCurrency(e.target.value)}
+                  onChange={(e) => {
+                    setCurrency(e.target.value);
+                    setUserSelectedCurrency(true);
+                  }}
                 >
                   <option value="INR - Indian Rupee">INR - Indian Rupee (₹) [Default]</option>
                   <option value="USD - US Dollar">USD - US Dollar ($)</option>

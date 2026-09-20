@@ -19,7 +19,7 @@ export default function Invoices({ invoices, onRefresh, showToast, userProfile, 
   const [searchTerm, setSearchTerm] = useState('');
   const [sendingEmail, setSendingEmail] = useState(null);
 
-  const formatMoney = (val) => formatCurrency(val, userProfile?.currency);
+  const formatMoney = (val, invCurrency) => formatCurrency(val, invCurrency || userProfile?.currency || 'INR - Indian Rupee');
 
   const handleStatusChange = async (id, newStatus) => {
     try {
@@ -47,7 +47,8 @@ export default function Invoices({ invoices, onRefresh, showToast, userProfile, 
   const handleDownloadPDF = (invoice) => {
     const clientObj = clients.find(c => c.company === invoice.client);
     const lang = invoice.language || userProfile?.language || 'English';
-    generateInvoicePDF(invoice, userProfile, clientObj, lang);
+    const curr = invoice.currency || userProfile?.currency || 'INR - Indian Rupee';
+    generateInvoicePDF(invoice, userProfile, clientObj, lang, curr);
     showToast(`Downloaded ${invoice.id}_${lang}.pdf`, 'info');
   };
 
@@ -187,9 +188,9 @@ export default function Invoices({ invoices, onRefresh, showToast, userProfile, 
                       <span className="table-subtext">{clientObj?.contact || 'Client'}</span>
                     </td>
                     <td>
-                      <div className="table-amount">{formatMoney(inv.amount)}</div>
+                      <div className="table-amount">{formatMoney(inv.amount, inv.currency)}</div>
                       {inv.taxAmount > 0 && (
-                        <span className="table-subtext">+{formatMoney(inv.taxAmount)} tax</span>
+                        <span className="table-subtext">+{formatMoney(inv.taxAmount, inv.currency)} tax</span>
                       )}
                     </td>
                     <td>

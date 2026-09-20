@@ -135,6 +135,19 @@ export default function App() {
     showToast('Logged out successfully', 'info');
   };
 
+  const handleGlobalCurrencyChange = async (e) => {
+    const newCurrency = e.target.value;
+    const updatedProfile = { ...userProfile, currency: newCurrency };
+    setUserProfile(updatedProfile);
+    try {
+      await api.updateProfile({ currency: newCurrency });
+      showToast(`Active Currency set to ${newCurrency}`, 'success');
+      loadData();
+    } catch (err) {
+      console.error('Failed to update currency:', err);
+    }
+  };
+
   // If user is not logged in, show Auth component
   if (!currentUser) {
     return (
@@ -240,6 +253,25 @@ export default function App() {
       <div className="main-wrapper">
         {/* Top Header */}
         <header className="topbar">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginRight: 'auto' }}>
+            <span style={{ fontSize: '13px', fontWeight: 600, color: '#475569' }}>
+              Currency:
+            </span>
+            <select
+              className="form-select"
+              style={{ width: 'auto', padding: '4px 10px', fontSize: '13px', height: '34px', borderRadius: '6px', border: '1px solid #cbd5e1', fontWeight: 500 }}
+              value={userProfile?.currency || 'INR - Indian Rupee'}
+              onChange={handleGlobalCurrencyChange}
+            >
+              <option value="INR - Indian Rupee">INR - Indian Rupee (₹) [Default]</option>
+              <option value="USD - US Dollar">USD - US Dollar ($)</option>
+              <option value="EUR - Euro">EUR - Euro (€)</option>
+              <option value="GBP - British Pound">GBP - British Pound (£)</option>
+              <option value="CAD - Canadian Dollar">CAD - Canadian Dollar (CA$)</option>
+              <option value="AUD - Australian Dollar">AUD - Australian Dollar (A$)</option>
+            </select>
+          </div>
+
           <button
             className="topbar-icon-btn"
             title="Notifications"
