@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { generateInvoicePDF } from './pdfGenerator';
 import { formatCurrency, getCurrencySymbol, convertCurrency, getCurrencyCode } from '../utils/currency';
+import { sendInvoiceEmailViaMailto } from '../utils/emailService';
 
 export default function CreateInvoice({ clients, onRefresh, showToast, userProfile }) {
   const navigate = useNavigate();
@@ -139,8 +140,13 @@ export default function CreateInvoice({ clients, onRefresh, showToast, userProfi
       // 1. Automatic PDF Download to user device
       generateInvoicePDF(createdInvoice, userProfile, clientObj, language, activeCurrency);
 
-      // 2. Automatic Email Delivery to client's email/gmail
-      showToast(`Invoice ${createdInvoice.id} downloaded as PDF and emailed to ${recipientEmail}!`, 'success');
+      // 2. Real Email Delivery to client's email/gmail via email composer
+      try {
+        sendInvoiceEmailViaMailto(createdInvoice, userProfile, clientObj);
+        showToast(`Invoice ${createdInvoice.id} downloaded & email composer opened for ${recipientEmail}!`, 'success');
+      } catch (emailErr) {
+        showToast(`Invoice ${createdInvoice.id} created & PDF downloaded!`, 'success');
+      }
 
       navigate('/invoices');
     } catch (err) {

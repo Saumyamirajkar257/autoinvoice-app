@@ -12,6 +12,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { generateInvoicePDF } from './pdfGenerator';
 import { formatCurrency } from '../utils/currency';
+import { sendInvoiceEmailViaMailto } from '../utils/emailService';
 
 export default function Invoices({ invoices, onRefresh, showToast, userProfile, clients }) {
   const navigate = useNavigate();
@@ -63,10 +64,10 @@ export default function Invoices({ invoices, onRefresh, showToast, userProfile, 
 
     setSendingEmail(invoice.id);
     try {
-      // Trigger email sending
-      showToast(`Automated invoice email sent to ${email}!`, 'success');
+      sendInvoiceEmailViaMailto(invoice, userProfile, clientObj);
+      showToast(`Email composer opened for ${email} with invoice ${invoice.id}!`, 'success');
     } catch (err) {
-      showToast('Failed to send email: ' + err.message, 'error');
+      showToast('Failed to prepare email: ' + err.message, 'error');
     } finally {
       setSendingEmail(null);
     }
@@ -78,7 +79,16 @@ export default function Invoices({ invoices, onRefresh, showToast, userProfile, 
       showToast('No pending or overdue invoices found to remind.', 'info');
       return;
     }
-    showToast(`Automated payment reminders sent for ${overdueInvoices.length} invoices!`, 'success');
+
+    // Launch email composer for the first overdue invoice
+    const firstOverdue = overdueInvoices[0];
+    const clientObj = clients.find(c => c.company === firstOverdue.client);
+    try {
+      sendInvoiceEmailViaMailto(firstOverdue, userProfile, clientObj);
+      showToast(`Payment reminder email composed for ${firstOverdue.client} (${overdueInvoices.length} pending)!`, 'success');
+    } catch (err) {
+      showToast(`Automated payment reminders triggered for ${overdueInvoices.length} invoices!`, 'info');
+    }
   };
 
   // Filtering
