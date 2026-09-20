@@ -12,16 +12,15 @@ import { api } from '../api';
 export default function Auth({ onLoginSuccess }) {
   const [isSignUp, setIsSignUp] = useState(false);
   const [fullName, setFullName] = useState('');
-  const [email, setEmail] = useState('zaid@example.com');
-  const [password, setPassword] = useState('password123');
-  const [confirmPassword, setConfirmPassword] = useState('password123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   const formatFirebaseError = (err) => {
     const code = err?.code || '';
-    const msg = err?.message || '';
 
     if (code === 'auth/user-not-found' || code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
       return 'Invalid email or password. Please check your credentials.';
@@ -35,11 +34,11 @@ export default function Auth({ onLoginSuccess }) {
     if (code === 'auth/invalid-email') {
       return 'Please enter a valid email address.';
     }
-    if (code === 'auth/popup-closed-by-user') {
+    if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
       return 'Google Sign-In popup was closed before completing.';
     }
-    if (code === 'auth/api-key-not-valid' || msg.includes('api-key')) {
-      return 'Firebase API Key is missing or invalid. Please check your .env configuration.';
+    if (code === 'auth/unauthorized-domain') {
+      return 'Domain not authorized in Firebase console. Please add this domain to Firebase Auth settings.';
     }
     return err.message || 'Authentication failed. Please try again.';
   };
@@ -48,32 +47,19 @@ export default function Auth({ onLoginSuccess }) {
     setError('');
     setLoading(true);
     try {
-      let fbUser = null;
-      try {
-        const result = await signInWithPopup(auth, googleProvider);
-        fbUser = result?.user;
-      } catch (fbErr) {
-        console.warn('Google Auth notice:', fbErr.code, fbErr.message);
-        if (fbErr.code === 'auth/api-key-not-valid' || fbErr.code === 'auth/invalid-api-key' || fbErr.message?.includes('api-key')) {
-          // Graceful fallback mode for demo/unconfigured key
-          fbUser = { displayName: 'Google User', email: 'google.user@example.com' };
-        } else if (fbErr.code === 'auth/popup-closed-by-user') {
-          setError('Google Sign-In popup was closed before completing.');
-          return;
-        } else {
-          throw fbErr;
-        }
-      }
+      const result = await signInWithPopup(auth, googleProvider);
+      const fbUser = result.user;
 
       const userPayload = {
-        fullName: fbUser?.displayName || 'Google User',
-        email: fbUser?.email || 'google.user@example.com',
-        logo: fbUser?.photoURL || ''
+        fullName: fbUser.displayName || fbUser.email?.split('@')[0] || 'User',
+        email: fbUser.email,
+        logo: fbUser.photoURL || ''
       };
 
       await api.updateProfile(userPayload).catch(() => {});
       onLoginSuccess(userPayload);
     } catch (err) {
+      console.error('Google Auth Error:', err);
       setError(formatFirebaseError(err));
     } finally {
       setLoading(false);
@@ -98,39 +84,27 @@ export default function Auth({ onLoginSuccess }) {
 
     try {
       if (isSignUp) {
-        let userCredential = null;
-        try {
-          userCredential = await createUserWithEmailAndPassword(auth, email, password);
-          if (userCredential.user && fullName) {
-            await updateProfile(userCredential.user, { displayName: fullName });
-          }
-        } catch (fbErr) {
-          console.warn('Firebase signup notice:', fbErr.code, fbErr.message);
-          if (fbErr.code === 'auth/email-already-in-use' || fbErr.code === 'auth/weak-password' || fbErr.code === 'auth/invalid-email') {
-            throw fbErr;
-          }
+        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+        const user = userCredential.user;
+        const displayName = fullName.trim() || email.split('@')[0];
+
+        if (user) {
+          await updateProfile(user, { displayName });
         }
 
-        const res = await api.signup({ fullName, email, password });
-        onLoginSuccess(res.user || { fullName, email });
+        const userPayload = { fullName: displayName, email: user.email };
+        await api.signup(userPayload).catch(() => {});
+        onLoginSuccess(userPayload);
       } else {
-        let userCredential = null;
-        try {
-          userCredential = await signInWithEmailAndPassword(auth, email, password);
-        } catch (fbErr) {
-          console.warn('Firebase login notice:', fbErr.code, fbErr.message);
-          if (fbErr.code === 'auth/user-not-found' || fbErr.code === 'auth/wrong-password' || fbErr.code === 'auth/invalid-credential') {
-            throw fbErr;
-          }
-        }
+        const userCredential = await signInWithEmailAndPassword(auth, email, password);
+        const user = userCredential.user;
+        const displayName = user.displayName || user.email?.split('@')[0] || 'User';
 
-        const user = userCredential?.user
-          ? { fullName: userCredential.user.displayName || email.split('@')[0], email: userCredential.user.email }
-          : (await api.login({ email, password })).user;
-
-        onLoginSuccess(user || { fullName: email.split('@')[0], email });
+        const userPayload = { fullName: displayName, email: user.email };
+        onLoginSuccess(userPayload);
       }
     } catch (err) {
+      console.error('Email Auth Error:', err);
       setError(formatFirebaseError(err));
     } finally {
       setLoading(false);
@@ -252,7 +226,7 @@ export default function Auth({ onLoginSuccess }) {
             <input
               type="email"
               className="form-input"
-              placeholder="Enter your email"
+              placeholder="name@example.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
