@@ -58,6 +58,17 @@ function createTransporter() {
   });
 }
 
+function checkSmtpConfigured() {
+  const provider = (process.env.EMAIL_PROVIDER || 'smtp').toLowerCase();
+  if (provider === 'gmail') {
+    return Boolean(process.env.EMAIL_FROM && process.env.EMAIL_APP_PASSWORD);
+  }
+  if (provider === 'resend' || provider === 'sendgrid') {
+    return Boolean(process.env.EMAIL_API_KEY);
+  }
+  return Boolean((process.env.SMTP_USER || process.env.EMAIL_FROM) && (process.env.SMTP_PASS || process.env.EMAIL_API_KEY));
+}
+
 /**
  * Format currency with symbol
  */
@@ -377,6 +388,10 @@ async function sendInvoiceEmail(invoice, senderProfile, recipientEmail, paymentU
     throw new Error('Recipient email address is required');
   }
 
+  if (!checkSmtpConfigured()) {
+    throw new Error('SMTP credentials are not configured in backend/.env. Please configure SMTP_USER & SMTP_PASS (or Gmail App Password / Resend API Key).');
+  }
+
   const senderName = senderProfile?.businessName || senderProfile?.fullName || 'AutoInvoice';
   const fromEmail = process.env.EMAIL_FROM || senderProfile?.email || 'noreply@autoinvoice.app';
   const currencyStr = invoice.currency || senderProfile?.currency || 'INR - Indian Rupee';
@@ -416,6 +431,10 @@ async function sendReceiptEmail(invoice, senderProfile, recipientEmail, payment)
     throw new Error('Recipient email address is required');
   }
 
+  if (!checkSmtpConfigured()) {
+    throw new Error('SMTP credentials are not configured in backend/.env. Please configure SMTP_USER & SMTP_PASS (or Gmail App Password / Resend API Key).');
+  }
+
   const senderName = senderProfile?.businessName || senderProfile?.fullName || 'AutoInvoice';
   const fromEmail = process.env.EMAIL_FROM || senderProfile?.email || 'noreply@autoinvoice.app';
   const currencyStr = invoice.currency || senderProfile?.currency || 'INR - Indian Rupee';
@@ -452,6 +471,10 @@ async function sendReceiptEmail(invoice, senderProfile, recipientEmail, payment)
 async function sendReminderEmail(invoice, senderProfile, recipientEmail, reminderType, paymentUrl) {
   if (!recipientEmail) {
     throw new Error('Recipient email address is required');
+  }
+
+  if (!checkSmtpConfigured()) {
+    throw new Error('SMTP credentials are not configured in backend/.env. Please configure SMTP_USER & SMTP_PASS (or Gmail App Password / Resend API Key).');
   }
 
   const senderName = senderProfile?.businessName || senderProfile?.fullName || 'AutoInvoice';

@@ -260,19 +260,14 @@ export default function CreateInvoice({ clients = [], onRefresh, showToast, user
       // Automatic PDF Download with selected template
       generateInvoicePDF(createdInvoice, userProfile, clientObj, language, activeCurrency, template);
 
-      // Backend Email Delivery (if status is 'sent')
+      // If status is 'sent', navigate to Invoices and prompt client email dispatch
       if (status === 'sent') {
-        try {
-          await api.sendInvoiceEmail(createdInvoice.id);
-          showToast(`Invoice ${createdInvoice.id} created, PDF downloaded & emailed!`, 'success');
-        } catch (emailErr) {
-          showToast(`Invoice ${createdInvoice.id} created & PDF downloaded! (Email delivery requires backend setup)`, 'success');
-        }
+        showToast(`Invoice ${createdInvoice.id} created & PDF downloaded! Ready to dispatch email.`, 'success');
+        navigate('/invoices', { state: { emailInvoiceId: createdInvoice.id } });
       } else {
         showToast(`Invoice ${createdInvoice.id} saved as draft & PDF downloaded!`, 'success');
+        navigate('/invoices');
       }
-
-      navigate('/invoices');
     } catch (err) {
       showToast(err.message || 'Failed to create invoice', 'error');
     } finally {

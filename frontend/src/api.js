@@ -10,6 +10,14 @@ import {
   writeBatch
 } from 'firebase/firestore';
 
+import {
+  getEmailSettings,
+  sendEmailJS,
+  buildInvoiceEmailData,
+  buildReminderEmailData,
+  buildReceiptEmailData
+} from './utils/emailService';
+
 const API_BASE = '/api';
 
 // Default initial data for local storage fallback
@@ -359,6 +367,10 @@ function handleFallback(endpoint, options = {}) {
     setLocal('autoinvoice_invoices', []);
     setLocal('autoinvoice_user', { ...DEFAULT_USER });
     return { message: 'Account data cleared successfully' };
+  }
+
+  if (endpoint.includes('/send-email') || endpoint.includes('/send-reminder') || endpoint.includes('/send-receipt')) {
+    return { success: false, fallbackRequired: true, message: 'Backend email service unavailable' };
   }
 
   return {};
@@ -757,20 +769,104 @@ export const api = {
   login: (credentials) => apiRequest('/auth/login', { method: 'POST', body: credentials }),
   signup: (userData) => apiRequest('/auth/signup', { method: 'POST', body: userData }),
 
-  // --- Backend Email Delivery ---
+  // --- Multi-Channel Email Delivery ---
   sendInvoiceEmail: async (invoiceId) => {
-    return apiRequest(`/invoices/${encodeURIComponent(invoiceId)}/send-email`, { method: 'POST' });
+    try {
+      const res = await apiRequest(`/invoices/${encodeURIComponent(invoiceId)}/send-email`, { method: 'POST' });
+      if (res && res.success) return res;
+    } catch (e) {
+      console.warn('Backend email API unreachable, checking cloud delivery:', e.message);
+    }
+
+    const settings = getEmailSettings();
+    if (settings.emailjs?.serviceId && settings.emailjs?.templateId && settings.emailjs?.publicKey) {
+      const invoices = getLocal('autoinvoice_invoices', DEFAULT_INVOICES);
+      const inv = invoices.find(i => String(i.id) === String(invoiceId));
+      const userProfile = getLocal('autoinvoice_user', DEFAULT_USER);
+      const clients = getLocal('autoinvoice_clients', DEFAULT_CLIENTS);
+      const clientObj = clients.find(c => c.company === inv?.client);
+      if (inv) {
+        const emailData = buildInvoiceEmailData(inv, userProfile, clientObj);
+        if (emailData.recipientEmail) {
+          await sendEmailJS({
+            to: emailData.recipientEmail,
+            subject: emailData.subject,
+            message: emailData.textBody,
+            invoiceData: { ...inv, paymentUrl: emailData.paymentUrl }
+          });
+          return { success: true, method: 'emailjs', message: `Invoice sent via EmailJS to ${emailData.recipientEmail}` };
+        }
+      }
+    }
+
+    return { success: false, fallbackRequired: true, message: 'Direct email dispatch ready via Gmail/Mail composer' };
   },
 
   sendPaymentReminder: async (invoiceId, reminderType = 'upcoming') => {
-    return apiRequest(`/invoices/${encodeURIComponent(invoiceId)}/send-reminder`, {
-      method: 'POST',
-      body: { reminderType }
-    });
+    try {
+      const res = await apiRequest(`/invoices/${encodeURIComponent(invoiceId)}/send-reminder`, {
+        method: 'POST',
+        body: { reminderType }
+      });
+      if (res && res.success) return res;
+    } catch (e) {
+      console.warn('Backend reminder API unreachable, checking cloud delivery:', e.message);
+    }
+
+    const settings = getEmailSettings();
+    if (settings.emailjs?.serviceId && settings.emailjs?.templateId && settings.emailjs?.publicKey) {
+      const invoices = getLocal('autoinvoice_invoices', DEFAULT_INVOICES);
+      const inv = invoices.find(i => String(i.id) === String(invoiceId));
+      const userProfile = getLocal('autoinvoice_user', DEFAULT_USER);
+      const clients = getLocal('autoinvoice_clients', DEFAULT_CLIENTS);
+      const clientObj = clients.find(c => c.company === inv?.client);
+      if (inv) {
+        const emailData = buildReminderEmailData(inv, userProfile, clientObj, reminderType);
+        if (emailData.recipientEmail) {
+          await sendEmailJS({
+            to: emailData.recipientEmail,
+            subject: emailData.subject,
+            message: emailData.textBody,
+            invoiceData: { ...inv, paymentUrl: emailData.paymentUrl }
+          });
+          return { success: true, method: 'emailjs', message: `Reminder sent via EmailJS to ${emailData.recipientEmail}` };
+        }
+      }
+    }
+
+    return { success: false, fallbackRequired: true, message: 'Please dispatch reminder via Gmail or EmailJS' };
   },
 
   sendPaymentReceipt: async (invoiceId) => {
-    return apiRequest(`/invoices/${encodeURIComponent(invoiceId)}/send-receipt`, { method: 'POST' });
+    try {
+      const res = await apiRequest(`/invoices/${encodeURIComponent(invoiceId)}/send-receipt`, { method: 'POST' });
+      if (res && res.success) return res;
+    } catch (e) {
+      console.warn('Backend receipt API unreachable, checking cloud delivery:', e.message);
+    }
+
+    const settings = getEmailSettings();
+    if (settings.emailjs?.serviceId && settings.emailjs?.templateId && settings.emailjs?.publicKey) {
+      const invoices = getLocal('autoinvoice_invoices', DEFAULT_INVOICES);
+      const inv = invoices.find(i => String(i.id) === String(invoiceId));
+      const userProfile = getLocal('autoinvoice_user', DEFAULT_USER);
+      const clients = getLocal('autoinvoice_clients', DEFAULT_CLIENTS);
+      const clientObj = clients.find(c => c.company === inv?.client);
+      if (inv) {
+        const emailData = buildReceiptEmailData(inv, userProfile, clientObj, inv.payment);
+        if (emailData.recipientEmail) {
+          await sendEmailJS({
+            to: emailData.recipientEmail,
+            subject: emailData.subject,
+            message: emailData.textBody,
+            invoiceData: inv
+          });
+          return { success: true, method: 'emailjs', message: `Receipt sent via EmailJS to ${emailData.recipientEmail}` };
+        }
+      }
+    }
+
+    return { success: false, fallbackRequired: true, message: 'Please dispatch receipt via Gmail or EmailJS' };
   },
 
   // --- Payment Management ---

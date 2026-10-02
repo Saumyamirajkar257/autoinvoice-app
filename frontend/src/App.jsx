@@ -557,6 +557,7 @@ export default function App() {
                       onRefresh={loadData}
                       onLogout={handleLogout}
                       showToast={showToast}
+                      userProfile={userProfile}
                     />
                   }
                 />

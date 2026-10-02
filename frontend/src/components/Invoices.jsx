@@ -17,22 +17,38 @@ import {
   Eye,
   X
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { api } from '../api';
 import { generateInvoicePDF, previewInvoicePDF } from './pdfGenerator';
 import { generateReceiptPDF } from './receiptGenerator';
 import { formatCurrency } from '../utils/currency';
 import PaymentModal from './PaymentModal';
+import SendEmailModal from './SendEmailModal';
 import ActivityTimeline from './ActivityTimeline';
 
 export default function Invoices({ invoices = [], onRefresh, showToast, userProfile, clients = [] }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const [activeTab, setActiveTab] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
-  const [sendingEmail, setSendingEmail] = useState(null);
   const [paymentModalInvoice, setPaymentModalInvoice] = useState(null);
   const [selectedDetailInvoice, setSelectedDetailInvoice] = useState(null);
   const [detailTemplate, setDetailTemplate] = useState('modern');
+  const [emailModalInvoice, setEmailModalInvoice] = useState(null);
+  const [emailModalType, setEmailModalType] = useState('invoice'); // 'invoice' | 'reminder' | 'receipt'
+  const [emailModalReminderType, setEmailModalReminderType] = useState('upcoming');
+
+  // Auto-open email modal if directed from CreateInvoice
+  useEffect(() => {
+    if (location.state?.emailInvoiceId && invoices.length > 0) {
+      const found = invoices.find(i => String(i.id) === String(location.state.emailInvoiceId));
+      if (found) {
+        setEmailModalInvoice(found);
+        setEmailModalType('invoice');
+        window.history.replaceState({}, document.title);
+      }
+    }
+  }, [location.state, invoices]);
 
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1);
@@ -87,44 +103,17 @@ export default function Invoices({ invoices = [], onRefresh, showToast, userProf
     showToast(`Downloaded Receipt for ${invoice.id}`, 'success');
   };
 
-  const handleSendReceipt = async (invoice) => {
-    try {
-      showToast(`Sending receipt to ${invoice.clientEmail || 'client'}...`, 'info');
-      const res = await api.sendPaymentReceipt(invoice.id);
-      showToast(res?.message || 'Payment receipt dispatched successfully!', 'success');
-      if (onRefresh) onRefresh();
-    } catch (err) {
-      showToast(err.message || 'Failed to dispatch receipt', 'error');
-    }
+  const handleSendReceipt = (invoice) => {
+    setEmailModalInvoice(invoice);
+    setEmailModalType('receipt');
   };
 
-  const handleEmailInvoice = async (invoice) => {
-    const clientObj = clients.find(c => c.company === invoice.client);
-    const email = invoice.clientEmail || clientObj?.email;
-
-    if (!email) {
-      showToast('No email address found for this client', 'error');
-      return;
-    }
-
-    setSendingEmail(invoice.id);
-    try {
-      showToast(`Sending invoice email to ${email}...`, 'info');
-      const result = await api.sendInvoiceEmail(invoice.id);
-      if (result?.success) {
-        showToast(`Invoice email sent to ${email}!`, 'success');
-      } else {
-        showToast(result?.message || `Invoice email dispatched to ${email}`, 'success');
-      }
-      if (onRefresh) onRefresh();
-    } catch (err) {
-      showToast('Unable to send email. Please check your email settings.', 'error');
-    } finally {
-      setSendingEmail(null);
-    }
+  const handleEmailInvoice = (invoice) => {
+    setEmailModalInvoice(invoice);
+    setEmailModalType('invoice');
   };
 
-  const handleSendOverdueReminders = async () => {
+  const handleSendOverdueReminders = () => {
     const overdueInvoices = invoices.filter(i => {
       const st = (i.status || '').toLowerCase();
       return st === 'overdue' || st === 'sent';
@@ -134,19 +123,11 @@ export default function Invoices({ invoices = [], onRefresh, showToast, userProf
       return;
     }
 
-    showToast(`Sending payment reminders for ${overdueInvoices.length} invoices...`, 'info');
-    let sentCount = 0;
-    for (const inv of overdueInvoices) {
-      try {
-        const reminderType = (inv.status || '').toLowerCase() === 'overdue' ? 'overdue' : 'upcoming';
-        await api.sendPaymentReminder(inv.id, reminderType);
-        sentCount++;
-      } catch (e) {
-        console.warn('Reminder error for', inv.id, e);
-      }
-    }
-    showToast(`Payment reminders sent for ${sentCount} invoices!`, 'success');
-    if (onRefresh) onRefresh();
+    const first = overdueInvoices[0];
+    setEmailModalInvoice(first);
+    setEmailModalType('reminder');
+    setEmailModalReminderType((first.status || '').toLowerCase() === 'overdue' ? 'overdue' : 'upcoming');
+    showToast(`Ready to send reminder for Invoice ${first.id} (${overdueInvoices.length} pending/overdue total)`, 'info');
   };
 
   const handleExportCSV = () => {
@@ -346,11 +327,10 @@ export default function Invoices({ invoices = [], onRefresh, showToast, userProf
                           )}
                           <button
                             className="icon-action-btn"
-                            title="Email Invoice"
+                            title="Send Invoice to Client"
                             onClick={() => handleEmailInvoice(inv)}
-                            disabled={sendingEmail === inv.id}
                           >
-                            <Mail size={15} color={sendingEmail === inv.id ? '#94a3b8' : '#2563eb'} />
+                            <Mail size={15} color="#2563eb" />
                           </button>
                           <select
                             className="status-select"
@@ -604,6 +584,21 @@ export default function Invoices({ invoices = [], onRefresh, showToast, userProf
             </div>
           </div>
         </div>
+      )}
+
+      {/* Send Email Modal */}
+      {emailModalInvoice && (
+        <SendEmailModal
+          invoice={emailModalInvoice}
+          type={emailModalType}
+          reminderType={emailModalReminderType}
+          userProfile={userProfile}
+          clients={clients}
+          payment={emailModalInvoice.payment}
+          onClose={() => setEmailModalInvoice(null)}
+          onRefresh={onRefresh}
+          showToast={showToast}
+        />
       )}
     </div>
   );
