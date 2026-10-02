@@ -24,6 +24,7 @@ const DEFAULT_INVOICES = [
     clientEmail: 'john@google.com',
     amount: 1500,
     status: 'sent',
+    template: 'modern',
     created: 'Sep 18, 2025',
     due: 'Oct 18, 2025',
     description: 'Mobile App Design & UI Consulting',
@@ -45,6 +46,7 @@ const DEFAULT_INVOICES = [
     clientEmail: 'john@google.com',
     amount: 708,
     status: 'paid',
+    template: 'modern',
     created: 'Sep 18, 2025',
     due: 'Oct 18, 2025',
     description: 'Website Performance & SEO Optimization',
@@ -74,6 +76,7 @@ const DEFAULT_USER = {
   website: '',
   currency: 'INR - Indian Rupee',
   language: 'English',
+  defaultTemplate: 'modern',
   theme: 'light',
   logo: ''
 };
@@ -287,6 +290,7 @@ function handleFallback(endpoint, options = {}) {
         client: body.client || '',
         clientEmail: body.clientEmail || '',
         clientGstin: body.clientGstin || '',
+        template: body.template || 'modern',
         amount: Number(total.toFixed(2)),
         status: body.status || 'sent',
         created: formattedCreated,
@@ -535,6 +539,7 @@ export const api = {
       id: invId,
       client: invoiceData.client || '',
       clientEmail: invoiceData.clientEmail || '',
+      template: invoiceData.template || 'modern',
       amount: Number(total.toFixed(2)),
       status: invoiceData.status || 'sent',
       created: formattedCreated,
@@ -668,6 +673,12 @@ export const api = {
       } catch (err) {
         console.warn('Firestore updateProfile error:', err);
       }
+    }
+    // Also sync to backend API if available
+    try {
+      await apiRequest('/profile', { method: 'PUT', body: updated });
+    } catch (e) {
+      // Ignored if standalone/offline
     }
     return updated;
   },

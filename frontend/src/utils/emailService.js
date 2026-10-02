@@ -180,7 +180,10 @@ ${userProfile?.website ? `Website: ${userProfile.website}` : ''}
   try {
     const web3Response = await fetch('https://api.web3forms.com/submit', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
       body: JSON.stringify({
         access_key: '5ba27f71-6c23-4c91-9e79-58ec789a5ee0',
         to_email: recipientEmail,
@@ -190,13 +193,17 @@ ${userProfile?.website ? `Website: ${userProfile.website}` : ''}
       })
     });
     if (web3Response.ok) {
-      return { success: true, method: 'web3', recipientEmail };
+      const data = await web3Response.json();
+      if (data.success === true) {
+        return { success: true, method: 'web3', recipientEmail };
+      }
+      console.warn('Web3Forms response returned success=false:', data);
     }
   } catch (err) {
     console.warn('Web3Forms delivery note:', err);
   }
 
-  // Method 2: FormSubmit AJAX API with 'box' template & clear labels
+  // Method 2: FormSubmit Direct AJAX API
   try {
     const response = await fetch(`https://formsubmit.co/ajax/${encodeURIComponent(recipientEmail)}`, {
       method: 'POST',
@@ -207,22 +214,18 @@ ${userProfile?.website ? `Website: ${userProfile.website}` : ''}
       body: JSON.stringify({
         _subject: subject,
         _replyto: senderEmail,
-        _template: 'box',
         _captcha: 'false',
-        "Invoice Number": invoice.id || 'INV-001',
-        "Issued By": senderName,
-        "Billed To": invoice.client || clientObj?.company || 'Client',
-        "Amount Due": formattedAmount,
-        "Due Date": invoice.due || 'Upon Receipt',
-        "Payment Link": paymentUrl,
-        "QR Code Link": qrCodeUrl,
-        "Message": textMessageBody
+        name: senderName,
+        email: senderEmail,
+        message: textMessageBody
       })
     });
 
     if (response.ok) {
       const data = await response.json();
-      return { success: true, method: 'cloud', recipientEmail, message: data.message || 'Email sent to recipient inbox!' };
+      if (data.success === 'true' || data.success === true || response.status === 200) {
+        return { success: true, method: 'cloud', recipientEmail, message: data.message || 'Email sent to recipient inbox!' };
+      }
     }
   } catch (err) {
     console.warn('FormSubmit cloud delivery note:', err);
@@ -314,7 +317,10 @@ This is an automated notification confirming that the invoice payment of ${forma
   try {
     const web3Response = await fetch('https://api.web3forms.com/submit', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
       body: JSON.stringify({
         access_key: '5ba27f71-6c23-4c91-9e79-58ec789a5ee0',
         to_email: ownerEmail,
@@ -324,7 +330,11 @@ This is an automated notification confirming that the invoice payment of ${forma
       })
     });
     if (web3Response.ok) {
-      return { success: true, ownerEmail, txnId };
+      const data = await web3Response.json();
+      if (data.success === true) {
+        return { success: true, ownerEmail, txnId };
+      }
+      console.warn('Web3Forms payment received error:', data);
     }
   } catch (err) {
     console.warn('Web3Forms owner notification error:', err);
@@ -340,19 +350,16 @@ This is an automated notification confirming that the invoice payment of ${forma
       },
       body: JSON.stringify({
         _subject: subject,
-        _template: 'box',
         _captcha: 'false',
-        "Invoice Number": invoice.id || 'INV-001',
-        "Client": invoice.client || 'Client',
-        "Amount Paid": formattedAmount,
-        "Status": 'PAID',
-        "Transaction ID": txnId,
-        "Date Time": nowStr,
-        "Message": textMessageBody
+        name: 'AutoInvoice Payment Gateway',
+        message: textMessageBody
       })
     });
     if (res.ok) {
-      return { success: true, ownerEmail, txnId };
+      const data = await res.json();
+      if (data.success === 'true' || data.success === true || res.status === 200) {
+        return { success: true, ownerEmail, txnId };
+      }
     }
   } catch (err) {
     console.warn('FormSubmit owner notification error:', err);

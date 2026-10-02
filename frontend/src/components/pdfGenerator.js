@@ -10,7 +10,7 @@ import { getText } from '../utils/languages';
  * 3. 'minimal' - Minimalist Elegance with generous whitespace & clean lines
  * 4. 'gst_pro' - Executive Pro structured layout
  */
-export function generateInvoicePDF(invoice, userProfile, clientObj, languageOverride, currencyOverride, templateOverride) {
+export function buildInvoicePDFDoc(invoice, userProfile, clientObj, languageOverride, currencyOverride, templateOverride) {
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   const pageW = doc.internal.pageSize.getWidth(); // 210mm
   const pageH = doc.internal.pageSize.getHeight(); // 297mm
@@ -18,36 +18,52 @@ export function generateInvoicePDF(invoice, userProfile, clientObj, languageOver
   const p = userProfile || {};
   const c = clientObj || {};
 
-  const lang = languageOverride || invoice.language || p.language || 'English';
+  const lang = languageOverride || invoice?.language || p.language || 'English';
   const t = (key) => getText(key, lang);
 
-  const currencySetting = currencyOverride || invoice.currency || p.currency || 'INR - Indian Rupee';
+  const currencySetting = currencyOverride || invoice?.currency || p.currency || 'INR - Indian Rupee';
   const formatMoney = (val) => formatCurrency(val, currencySetting);
   const currencySymbol = getCurrencySymbol(currencySetting);
 
-  const template = templateOverride || invoice.template || p.defaultTemplate || 'modern';
+  // Normalize and resolve template
+  const rawTemplate = String(templateOverride || invoice?.template || p.defaultTemplate || 'modern').toLowerCase().trim();
+  const validTemplates = ['modern', 'classic', 'minimal', 'gst_pro'];
+  const template = validTemplates.includes(rawTemplate) ? rawTemplate : 'modern';
 
-  const items = Array.isArray(invoice.items) && invoice.items.length > 0
+  const items = Array.isArray(invoice?.items) && invoice.items.length > 0
     ? invoice.items
     : [{
-        description: invoice.description || 'Professional Service',
-        quantity: Number(invoice.quantity) || 1,
-        rate: Number(invoice.rate) || Number(invoice.amount) || 0,
-        amount: (Number(invoice.quantity) || 1) * (Number(invoice.rate) || Number(invoice.amount) || 0)
+        description: invoice?.description || 'Professional Service',
+        quantity: Number(invoice?.quantity) || 1,
+        rate: Number(invoice?.rate) || Number(invoice?.amount) || 0,
+        amount: (Number(invoice?.quantity) || 1) * (Number(invoice?.rate) || Number(invoice?.amount) || 0)
       }];
 
   if (template === 'modern') {
-    renderModernTemplate(doc, invoice, p, c, items, t, formatMoney, currencySymbol, currencySetting, pageW, pageH);
+    renderModernTemplate(doc, invoice || {}, p, c, items, t, formatMoney, currencySymbol, currencySetting, pageW, pageH);
   } else if (template === 'classic') {
-    renderClassicTemplate(doc, invoice, p, c, items, t, formatMoney, currencySymbol, currencySetting, pageW, pageH);
+    renderClassicTemplate(doc, invoice || {}, p, c, items, t, formatMoney, currencySymbol, currencySetting, pageW, pageH);
   } else if (template === 'minimal') {
-    renderMinimalTemplate(doc, invoice, p, c, items, t, formatMoney, currencySymbol, currencySetting, pageW, pageH);
+    renderMinimalTemplate(doc, invoice || {}, p, c, items, t, formatMoney, currencySymbol, currencySetting, pageW, pageH);
   } else {
-    renderGSTProTemplate(doc, invoice, p, c, items, t, formatMoney, currencySymbol, currencySetting, pageW, pageH);
+    renderGSTProTemplate(doc, invoice || {}, p, c, items, t, formatMoney, currencySymbol, currencySetting, pageW, pageH);
   }
 
-  doc.save(`${invoice.id || 'Invoice'}_${template}_${lang}.pdf`);
+  return { doc, template, lang };
+}
+
+export function generateInvoicePDF(invoice, userProfile, clientObj, languageOverride, currencyOverride, templateOverride) {
+  const { doc, template, lang } = buildInvoicePDFDoc(invoice, userProfile, clientObj, languageOverride, currencyOverride, templateOverride);
+  doc.save(`${invoice?.id || 'Invoice'}_${template}_${lang}.pdf`);
   return doc;
+}
+
+export function previewInvoicePDF(invoice, userProfile, clientObj, languageOverride, currencyOverride, templateOverride) {
+  const { doc } = buildInvoicePDFDoc(invoice, userProfile, clientObj, languageOverride, currencyOverride, templateOverride);
+  const blob = doc.output('blob');
+  const blobUrl = URL.createObjectURL(blob);
+  window.open(blobUrl, '_blank');
+  return blobUrl;
 }
 
 // ---------------------------------------------------------------------------

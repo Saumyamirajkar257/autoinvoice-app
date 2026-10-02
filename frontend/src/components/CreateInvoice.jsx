@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Plus, Trash2, CheckCircle2, Send, Save, RefreshCw, DollarSign, LayoutTemplate, ChevronDown, ChevronUp } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, CheckCircle2, Send, Save, RefreshCw, DollarSign, LayoutTemplate, ChevronDown, ChevronUp, Eye } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
-import { generateInvoicePDF } from './pdfGenerator';
+import { generateInvoicePDF, previewInvoicePDF } from './pdfGenerator';
 import { formatCurrency, getCurrencySymbol, convertCurrency, getCurrencyCode } from '../utils/currency';
 
 export default function CreateInvoice({ clients = [], onRefresh, showToast, userProfile }) {
@@ -29,6 +29,7 @@ export default function CreateInvoice({ clients = [], onRefresh, showToast, user
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [userSelectedCurrency, setUserSelectedCurrency] = useState(false);
+  const [userSelectedTemplate, setUserSelectedTemplate] = useState(false);
 
   // GST fields
   const [gstEnabled, setGstEnabled] = useState(false);
@@ -55,10 +56,10 @@ export default function CreateInvoice({ clients = [], onRefresh, showToast, user
     if (userProfile?.currency && !userSelectedCurrency) {
       setCurrency(userProfile.currency);
     }
-    if (userProfile?.defaultTemplate) {
+    if (userProfile?.defaultTemplate && !userSelectedTemplate) {
       setTemplate(userProfile.defaultTemplate);
     }
-  }, [userProfile, userSelectedCurrency]);
+  }, [userProfile, userSelectedCurrency, userSelectedTemplate]);
 
   // Subtotal & Tax Calculations
   const subtotal = items.reduce((sum, item) => {
@@ -287,9 +288,20 @@ export default function CreateInvoice({ clients = [], onRefresh, showToast, user
 
           {/* Card 2: PDF Template Selector */}
           <div className="card">
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
-              <LayoutTemplate size={18} color="var(--accent-primary)" />
-              <h3 className="card-title" style={{ margin: 0 }}>Select PDF Template</h3>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <LayoutTemplate size={18} color="var(--accent-primary)" />
+                <h3 className="card-title" style={{ margin: 0 }}>Select PDF Template</h3>
+              </div>
+              <button
+                type="button"
+                className="btn-secondary btn-sm"
+                onClick={handlePreviewPDF}
+                style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                title="Preview current invoice in this template"
+              >
+                <Eye size={14} /> Preview Live PDF
+              </button>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px' }} className="template-grid">
               {[
@@ -301,7 +313,10 @@ export default function CreateInvoice({ clients = [], onRefresh, showToast, user
                 <div
                   key={tmpl.id}
                   className={`template-card ${template === tmpl.id ? 'active' : ''}`}
-                  onClick={() => setTemplate(tmpl.id)}
+                  onClick={() => {
+                    setTemplate(tmpl.id);
+                    setUserSelectedTemplate(true);
+                  }}
                 >
                   <LayoutTemplate size={18} />
                   <strong>{tmpl.name}</strong>
@@ -589,6 +604,15 @@ export default function CreateInvoice({ clients = [], onRefresh, showToast, user
 
             {/* Action Buttons */}
             <div className="summary-actions">
+              <button
+                type="button"
+                className="btn-secondary btn-full"
+                onClick={handlePreviewPDF}
+                title="Preview what the generated PDF will look like"
+              >
+                <Eye size={16} />
+                Preview PDF ({template.toUpperCase()})
+              </button>
               <button
                 type="button"
                 className="btn-secondary btn-full"
