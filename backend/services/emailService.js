@@ -383,7 +383,7 @@ Sent via AutoInvoice
 /**
  * Send an invoice email to the client
  */
-async function sendInvoiceEmail(invoice, senderProfile, recipientEmail, paymentUrl) {
+async function sendInvoiceEmail(invoice, senderProfile, recipientEmail, paymentUrl, pdfAttachment = null) {
   if (!recipientEmail) {
     throw new Error('Recipient email address is required');
   }
@@ -392,12 +392,12 @@ async function sendInvoiceEmail(invoice, senderProfile, recipientEmail, paymentU
     throw new Error('SMTP credentials are not configured in backend/.env. Please configure SMTP_USER & SMTP_PASS (or Gmail App Password / Resend API Key).');
   }
 
-  const senderName = senderProfile?.businessName || senderProfile?.fullName || 'AutoInvoice';
+  const senderName = senderProfile?.businessName || senderProfile?.fullName || 'AutoInvoice Business';
   const fromEmail = process.env.EMAIL_FROM || senderProfile?.email || 'noreply@autoinvoice.app';
   const currencyStr = invoice.currency || senderProfile?.currency || 'INR - Indian Rupee';
   const formattedAmount = formatCurrency(invoice.amount, currencyStr);
   
-  const subject = `Invoice ${invoice.id || 'INV-001'} from ${senderName} (${formattedAmount})`;
+  const subject = `Invoice ${invoice.id || 'INV-001'} from ${senderName} — ${formattedAmount}`;
 
   const transporter = createTransporter();
 
@@ -408,6 +408,18 @@ async function sendInvoiceEmail(invoice, senderProfile, recipientEmail, paymentU
     text: buildInvoiceEmailText(invoice, senderProfile, paymentUrl),
     html: buildInvoiceEmailHTML(invoice, senderProfile, paymentUrl)
   };
+
+  if (pdfAttachment) {
+    const filename = pdfAttachment.filename || `${invoice.id || 'invoice'}.pdf`;
+    const content = pdfAttachment.content || pdfAttachment;
+    mailOptions.attachments = [
+      {
+        filename,
+        content: Buffer.isBuffer(content) ? content : (typeof content === 'string' && !content.startsWith('http') ? Buffer.from(content, 'base64') : content),
+        contentType: 'application/pdf'
+      }
+    ];
+  }
 
   try {
     const info = await transporter.sendMail(mailOptions);

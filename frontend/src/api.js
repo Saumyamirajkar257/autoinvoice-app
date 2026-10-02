@@ -769,15 +769,39 @@ export const api = {
   login: (credentials) => apiRequest('/auth/login', { method: 'POST', body: credentials }),
   signup: (userData) => apiRequest('/auth/signup', { method: 'POST', body: userData }),
 
-  // --- Multi-Channel Email Delivery ---
-  sendInvoiceEmail: async (invoiceId) => {
+  // --- Backend Transactional Email Delivery ---
+  sendInvoiceEmail: async (invoiceId, options = {}) => {
+    const payload = {};
+    if (options.recipientEmail) payload.recipientEmail = options.recipientEmail;
+    if (options.pdfBase64) payload.pdfBase64 = options.pdfBase64;
+
     try {
-      const res = await apiRequest(`/invoices/${encodeURIComponent(invoiceId)}/send-email`, { method: 'POST' });
-      if (res && res.success) return res;
+      const res = await apiRequest(`/invoices/${encodeURIComponent(invoiceId)}/send`, {
+        method: 'POST',
+        body: payload
+      });
+      if (res && res.success) {
+        let invoices = getLocal('autoinvoice_invoices', DEFAULT_INVOICES);
+        invoices = invoices.map(i => String(i.id) === String(invoiceId) ? {
+          ...i,
+          emailStatus: 'sent',
+          emailSentTo: res.recipient || options.recipientEmail,
+          emailSentAt: res.sentAt || new Date().toISOString()
+        } : i);
+        setLocal('autoinvoice_invoices', invoices);
+        return res;
+      }
+      if (res && res.error) {
+        throw new Error(res.error);
+      }
     } catch (e) {
-      console.warn('Backend email API unreachable, checking cloud delivery:', e.message);
+      console.warn('Backend send API notice:', e.message);
+      if (e.message && e.message.includes('Unable to send')) {
+        throw e;
+      }
     }
 
+    // Direct cloud / EmailJS fallback if configured
     const settings = getEmailSettings();
     if (settings.emailjs?.serviceId && settings.emailjs?.templateId && settings.emailjs?.publicKey) {
       const invoices = getLocal('autoinvoice_invoices', DEFAULT_INVOICES);
@@ -787,19 +811,37 @@ export const api = {
       const clientObj = clients.find(c => c.company === inv?.client);
       if (inv) {
         const emailData = buildInvoiceEmailData(inv, userProfile, clientObj);
-        if (emailData.recipientEmail) {
+        const toEmail = options.recipientEmail || emailData.recipientEmail;
+        if (toEmail) {
           await sendEmailJS({
-            to: emailData.recipientEmail,
+            to: toEmail,
             subject: emailData.subject,
             message: emailData.textBody,
             invoiceData: { ...inv, paymentUrl: emailData.paymentUrl }
           });
-          return { success: true, method: 'emailjs', message: `Invoice sent via EmailJS to ${emailData.recipientEmail}` };
+          const sentAt = new Date().toISOString();
+          let invoices = getLocal('autoinvoice_invoices', DEFAULT_INVOICES);
+          invoices = invoices.map(i => String(i.id) === String(invoiceId) ? {
+            ...i,
+            emailStatus: 'sent',
+            emailSentTo: toEmail,
+            emailSentAt: sentAt
+          } : i);
+          setLocal('autoinvoice_invoices', invoices);
+
+          return {
+            success: true,
+            method: 'emailjs',
+            message: `Invoice ${inv.id} was sent to ${toEmail}`,
+            recipient: toEmail,
+            emailStatus: 'sent',
+            sentAt
+          };
         }
       }
     }
 
-    return { success: false, fallbackRequired: true, message: 'Direct email dispatch ready via Gmail/Mail composer' };
+    throw new Error('Unable to send the invoice. Please check the email address or try again.');
   },
 
   sendPaymentReminder: async (invoiceId, reminderType = 'upcoming') => {

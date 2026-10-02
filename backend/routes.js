@@ -3,6 +3,7 @@ const router = express.Router();
 const db = require('./database');
 const { requireAuth, optionalAuth, firestore } = require('./middleware/auth');
 const emailService = require('./services/emailService');
+const pdfService = require('./services/pdfService');
 
 // ============================================================
 // PUBLIC ROUTES (no auth required)
@@ -241,13 +242,13 @@ router.delete('/invoices/:id', (req, res) => {
   res.json({ message: 'Invoice deleted successfully' });
 });
 
-// --- Send Invoice Email (Backend-powered) ---
-router.post('/invoices/:id/send-email', requireAuth, async (req, res) => {
+// --- Send Invoice to Client (Backend-powered with PDF attachment) ---
+const handleSendInvoice = async (req, res) => {
   try {
     const { id } = req.params;
     const uid = req.user.uid;
 
-    // 1. Get invoice from Firestore
+    // 1. Get invoice from Firestore or local db
     let invoice = null;
     let senderProfile = null;
 
@@ -280,20 +281,45 @@ router.post('/invoices/:id/send-email', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'Invoice not found' });
     }
 
-    // 2. Get recipient email
-    const recipientEmail = invoice.clientEmail;
-    if (!recipientEmail) {
-      return res.status(400).json({ error: 'Client email address is missing from this invoice.' });
+    // 2. Validate recipient email
+    const recipientEmail = (req.body && req.body.recipientEmail) || invoice.clientEmail;
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!recipientEmail || !emailRegex.test(recipientEmail.trim())) {
+      return res.status(400).json({ error: 'Unable to send the invoice. Please check the email address or try again.' });
     }
 
-    // 3. Build payment URL
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    // 3. Build public payment & view URL (no login required for clients)
+    const frontendUrl = process.env.FRONTEND_URL || 'https://autoinvoice-frontend.saumyamir25.workers.dev';
     const paymentUrl = `${frontendUrl}/#/pay/${encodeURIComponent(invoice.id)}?uid=${uid}`;
 
-    // 4. Send email
-    const result = await emailService.sendInvoiceEmail(invoice, senderProfile, recipientEmail, paymentUrl);
+    // 4. Generate/attach official invoice PDF
+    let pdfBuffer = null;
+    if (req.body && req.body.pdfBase64) {
+      pdfBuffer = Buffer.from(req.body.pdfBase64, 'base64');
+    } else {
+      try {
+        pdfBuffer = pdfService.generateInvoicePDFBuffer(invoice, senderProfile, { company: invoice.client, email: recipientEmail });
+      } catch (pdfErr) {
+        console.warn('Backend PDF generation fallback note:', pdfErr.message);
+      }
+    }
 
-    // 5. Log activity in Firestore
+    const pdfAttachment = pdfBuffer ? {
+      filename: `${invoice.id || 'INV-001'}.pdf`,
+      content: pdfBuffer
+    } : null;
+
+    // 5. Send transactional email through configured provider
+    const result = await emailService.sendInvoiceEmail(
+      invoice,
+      senderProfile,
+      recipientEmail.trim(),
+      paymentUrl,
+      pdfAttachment
+    );
+
+    // 6. Record email status on invoice
+    const sentAt = new Date().toISOString();
     try {
       const invRef = firestore.collection('users').doc(uid).collection('invoices').doc(id);
       const snap = await invRef.get();
@@ -302,14 +328,15 @@ router.post('/invoices/:id/send-email', requireAuth, async (req, res) => {
         const activity = data.activity || [];
         activity.push({
           event: 'email_sent',
-          timestamp: new Date().toISOString(),
+          timestamp: sentAt,
           actor: 'owner',
-          details: { to: recipientEmail, messageId: result.messageId }
+          details: { to: recipientEmail.trim(), messageId: result.messageId, withPdf: Boolean(pdfAttachment) }
         });
-        await invRef.update({ 
+        await invRef.update({
           activity,
-          emailSentAt: new Date().toISOString(),
           emailStatus: 'sent',
+          emailSentTo: recipientEmail.trim(),
+          emailSentAt: sentAt,
           status: data.status === 'draft' ? 'sent' : data.status
         });
       }
@@ -319,17 +346,48 @@ router.post('/invoices/:id/send-email', requireAuth, async (req, res) => {
 
     res.json({
       success: true,
-      message: `Invoice email sent to ${recipientEmail}`,
-      ...result
+      message: `Invoice ${invoice.id} was sent to ${recipientEmail.trim()}`,
+      recipient: recipientEmail.trim(),
+      emailStatus: 'sent',
+      sentAt,
+      messageId: result.messageId
     });
   } catch (err) {
-    console.error('Send email error:', err);
-    res.status(500).json({ 
-      error: 'Unable to send email',
-      message: err.message || 'Please check your email configuration and try again.'
+    console.error('Send invoice email error:', err.message);
+
+    // Record failure in Firestore if possible
+    try {
+      const { id } = req.params;
+      const uid = req.user.uid;
+      const invRef = firestore.collection('users').doc(uid).collection('invoices').doc(id);
+      const snap = await invRef.get();
+      if (snap.exists) {
+        const data = snap.data();
+        const activity = data.activity || [];
+        activity.push({
+          event: 'email_failed',
+          timestamp: new Date().toISOString(),
+          actor: 'owner',
+          details: { error: err.message }
+        });
+        await invRef.update({
+          activity,
+          emailStatus: 'failed'
+        });
+      }
+    } catch (e) {
+      // ignore
+    }
+
+    res.status(500).json({
+      error: 'Unable to send the invoice. Please check the email address or try again.',
+      emailStatus: 'failed'
     });
   }
-});
+};
+
+router.post('/invoices/:id/send', requireAuth, handleSendInvoice);
+router.post('/invoices/:id/send-email', requireAuth, handleSendInvoice);
 
 // --- Send Payment Reminder ---
 router.post('/invoices/:id/send-reminder', requireAuth, async (req, res) => {

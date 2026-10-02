@@ -66,6 +66,17 @@ export function generateInvoicePDF(invoice, userProfile, clientObj, languageOver
   return doc;
 }
 
+export function getInvoicePDFBase64(invoice, userProfile, clientObj, languageOverride, currencyOverride, templateOverride) {
+  try {
+    const { doc } = buildInvoicePDFDoc(invoice, userProfile, clientObj, languageOverride, currencyOverride, templateOverride);
+    const dataUri = doc.output('datauristring');
+    return dataUri.includes(',') ? dataUri.split(',')[1] : dataUri;
+  } catch (err) {
+    console.warn('PDF base64 generation fallback:', err);
+    return null;
+  }
+}
+
 export function previewInvoicePDF(invoice, userProfile, clientObj, languageOverride, currencyOverride, templateOverride) {
   const { doc } = buildInvoicePDFDoc(invoice, userProfile, clientObj, languageOverride, currencyOverride, templateOverride);
   const blob = doc.output('blob');

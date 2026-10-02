@@ -15,11 +15,14 @@ import {
   Clock,
   ShieldCheck,
   Eye,
-  X
+  X,
+  Send,
+  RefreshCw,
+  Check
 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { api } from '../api';
-import { generateInvoicePDF, previewInvoicePDF } from './pdfGenerator';
+import { generateInvoicePDF, previewInvoicePDF, getInvoicePDFBase64 } from './pdfGenerator';
 import { generateReceiptPDF } from './receiptGenerator';
 import { formatCurrency } from '../utils/currency';
 import PaymentModal from './PaymentModal';
@@ -79,6 +82,8 @@ export default function Invoices({ invoices = [], onRefresh, showToast, userProf
     }
   };
 
+  const [sendingInvoiceId, setSendingInvoiceId] = useState(null);
+
   const handleDownloadPDF = (invoice, templateOverride) => {
     const clientObj = clients.find(c => c.company === invoice.client);
     const lang = invoice.language || userProfile?.language || 'English';
@@ -106,6 +111,53 @@ export default function Invoices({ invoices = [], onRefresh, showToast, userProf
   const handleSendReceipt = (invoice) => {
     setEmailModalInvoice(invoice);
     setEmailModalType('receipt');
+  };
+
+  const handleDirectSendInvoice = async (invoice) => {
+    const clientObj = clients.find(c => c.company === invoice.client);
+    const email = invoice.clientEmail || clientObj?.email;
+
+    if (!email) {
+      showToast('Client email address missing. Please enter email to send.', 'info');
+      setEmailModalInvoice(invoice);
+      setEmailModalType('invoice');
+      return;
+    }
+
+    setSendingInvoiceId(invoice.id);
+    showToast(`Sending invoice ${invoice.id} to ${email}...`, 'info');
+    try {
+      const pdfBase64 = getInvoicePDFBase64(invoice, userProfile, clientObj, invoice.language, invoice.currency, invoice.template);
+
+      await api.sendInvoiceEmail(invoice.id, {
+        recipientEmail: email,
+        pdfBase64
+      });
+
+      const now = new Date().toISOString();
+      setSelectedDetailInvoice(prev => prev && prev.id === invoice.id ? {
+        ...prev,
+        emailStatus: 'sent',
+        emailSentTo: email,
+        emailSentAt: now
+      } : prev);
+
+      showToast(`Invoice ${invoice.id} was sent to ${email}`, 'success');
+      if (onRefresh) onRefresh();
+    } catch (err) {
+      console.error('Invoice send error:', err);
+      showToast('Unable to send the invoice. Please check the email address or try again.', 'error');
+      setSelectedDetailInvoice(prev => prev && prev.id === invoice.id ? {
+        ...prev,
+        emailStatus: 'failed'
+      } : prev);
+      try {
+        await api.updateInvoice(invoice.id, { emailStatus: 'failed' });
+        if (onRefresh) onRefresh();
+      } catch (e) {}
+    } finally {
+      setSendingInvoiceId(null);
+    }
   };
 
   const handleEmailInvoice = (invoice) => {
@@ -250,6 +302,7 @@ export default function Invoices({ invoices = [], onRefresh, showToast, userProf
                 <th>Client</th>
                 <th>Amount</th>
                 <th>Status</th>
+                <th>Email Status</th>
                 <th>Created</th>
                 <th>Due Date</th>
                 <th>Actions</th>
@@ -258,7 +311,7 @@ export default function Invoices({ invoices = [], onRefresh, showToast, userProf
             <tbody>
               {paginatedInvoices.length === 0 ? (
                 <tr>
-                  <td colSpan="7" style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '48px 16px' }}>
+                  <td colSpan="8" style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '48px 16px' }}>
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
                       <Receipt size={36} color="var(--text-muted)" />
                       <strong>No invoices found matching your criteria.</strong>
@@ -291,10 +344,47 @@ export default function Invoices({ invoices = [], onRefresh, showToast, userProf
                           {inv.status || 'sent'}
                         </span>
                       </td>
+                      <td>
+                        {inv.emailStatus === 'sent' ? (
+                          <span
+                            className="email-status-badge sent"
+                            title={`Sent to: ${inv.emailSentTo || inv.clientEmail || 'client'}${inv.emailSentAt ? ' • ' + new Date(inv.emailSentAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : ''}`}
+                          >
+                            <Check size={11} /> Sent
+                          </span>
+                        ) : inv.emailStatus === 'failed' ? (
+                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                            <span className="email-status-badge failed">✕ Failed</span>
+                            <button
+                              type="button"
+                              className="btn-retry-send"
+                              title="Retry sending invoice email"
+                              onClick={(e) => { e.stopPropagation(); handleDirectSendInvoice(inv); }}
+                            >
+                              Retry
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="email-status-badge pending">Not Sent</span>
+                        )}
+                      </td>
                       <td>{inv.created}</td>
                       <td>{inv.due}</td>
                       <td>
                         <div className="actions-cell">
+                          <button
+                            className="icon-action-btn"
+                            title="Send Invoice to Client"
+                            disabled={sendingInvoiceId === inv.id}
+                            onClick={() => handleDirectSendInvoice(inv)}
+                            style={{ color: '#2563eb' }}
+                          >
+                            {sendingInvoiceId === inv.id ? (
+                              <RefreshCw size={15} className="spin" />
+                            ) : (
+                              <Send size={15} />
+                            )}
+                          </button>
                           <button
                             className="icon-action-btn"
                             title="View Activity & Details"
@@ -327,10 +417,10 @@ export default function Invoices({ invoices = [], onRefresh, showToast, userProf
                           )}
                           <button
                             className="icon-action-btn"
-                            title="Send Invoice to Client"
+                            title="Compose Custom Email Options"
                             onClick={() => handleEmailInvoice(inv)}
                           >
-                            <Mail size={15} color="#2563eb" />
+                            <Mail size={15} color="#64748b" />
                           </button>
                           <select
                             className="status-select"
@@ -503,6 +593,53 @@ export default function Invoices({ invoices = [], onRefresh, showToast, userProf
                 </div>
               )}
 
+              {/* Email Delivery Status Card */}
+              <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px', padding: '14px 16px', background: 'var(--bg-card)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>Email Delivery Status</span>
+                  {selectedDetailInvoice.emailStatus === 'sent' ? (
+                    <span className="email-status-badge sent">
+                      <Check size={11} /> Sent
+                    </span>
+                  ) : selectedDetailInvoice.emailStatus === 'failed' ? (
+                    <span className="email-status-badge failed">
+                      ✕ Failed
+                    </span>
+                  ) : (
+                    <span className="email-status-badge pending">
+                      Not Sent
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '12.5px' }}>
+                  <div>
+                    <span style={{ color: 'var(--text-muted)' }}>Sent to: </span>
+                    <strong>{selectedDetailInvoice.emailSentTo || selectedDetailInvoice.clientEmail || '—'}</strong>
+                  </div>
+                  <div>
+                    <span style={{ color: 'var(--text-muted)' }}>Sent at: </span>
+                    <strong>
+                      {selectedDetailInvoice.emailSentAt 
+                        ? new Date(selectedDetailInvoice.emailSentAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
+                        : '—'}
+                    </strong>
+                  </div>
+                </div>
+                {selectedDetailInvoice.emailStatus === 'failed' && (
+                  <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'flex-end' }}>
+                    <button
+                      type="button"
+                      className="btn-retry-send"
+                      disabled={sendingInvoiceId === selectedDetailInvoice.id}
+                      onClick={() => handleDirectSendInvoice(selectedDetailInvoice)}
+                    >
+                      <RefreshCw size={12} className={sendingInvoiceId === selectedDetailInvoice.id ? 'spin' : ''} />
+                      Retry Send
+                    </button>
+                  </div>
+                )}
+              </div>
+
               {/* Activity Timeline Card */}
               <div>
                 <h4 style={{ margin: '0 0 12px 0', fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>
@@ -547,40 +684,59 @@ export default function Invoices({ invoices = [], onRefresh, showToast, userProf
                   <Download size={13} /> Download
                 </button>
               </div>
-              {selectedDetailInvoice.status === 'paid' && (
-                <>
-                  <button
-                    className="btn-secondary btn-sm"
-                    onClick={() => handleDownloadReceipt(selectedDetailInvoice)}
-                  >
-                    <Receipt size={14} color="#16a34a" /> Download Receipt
-                  </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <button
+                  type="button"
+                  className="btn-primary btn-sm"
+                  disabled={sendingInvoiceId === selectedDetailInvoice.id}
+                  onClick={() => handleDirectSendInvoice(selectedDetailInvoice)}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                >
+                  {sendingInvoiceId === selectedDetailInvoice.id ? (
+                    <>
+                      <RefreshCw size={13} className="spin" /> Sending...
+                    </>
+                  ) : (
+                    <>
+                      <Send size={13} /> Send Invoice
+                    </>
+                  )}
+                </button>
+                {selectedDetailInvoice.status === 'paid' && (
+                  <>
+                    <button
+                      className="btn-secondary btn-sm"
+                      onClick={() => handleDownloadReceipt(selectedDetailInvoice)}
+                    >
+                      <Receipt size={14} color="#16a34a" /> Download Receipt
+                    </button>
+                    <button
+                      className="btn-primary btn-sm"
+                      onClick={() => handleSendReceipt(selectedDetailInvoice)}
+                    >
+                      <Mail size={14} /> Email Receipt
+                    </button>
+                  </>
+                )}
+                {selectedDetailInvoice.status === 'pending_verification' && (
                   <button
                     className="btn-primary btn-sm"
-                    onClick={() => handleSendReceipt(selectedDetailInvoice)}
+                    style={{ background: '#16a34a' }}
+                    onClick={async () => {
+                      try {
+                        await api.verifyPayment(selectedDetailInvoice.id);
+                        showToast(`Payment verified for ${selectedDetailInvoice.id}!`, 'success');
+                        setSelectedDetailInvoice(null);
+                        if (onRefresh) onRefresh();
+                      } catch (e) {
+                        showToast('Unable to verify payment', 'error');
+                      }
+                    }}
                   >
-                    <Mail size={14} /> Email Receipt
+                    <ShieldCheck size={14} /> Verify & Mark Paid
                   </button>
-                </>
-              )}
-              {selectedDetailInvoice.status === 'pending_verification' && (
-                <button
-                  className="btn-primary btn-sm"
-                  style={{ background: '#16a34a' }}
-                  onClick={async () => {
-                    try {
-                      await api.verifyPayment(selectedDetailInvoice.id);
-                      showToast(`Payment verified for ${selectedDetailInvoice.id}!`, 'success');
-                      setSelectedDetailInvoice(null);
-                      if (onRefresh) onRefresh();
-                    } catch (e) {
-                      showToast('Unable to verify payment', 'error');
-                    }
-                  }}
-                >
-                  <ShieldCheck size={14} /> Verify & Mark Paid
-                </button>
-              )}
+                )}
+              </div>
             </div>
           </div>
         </div>
