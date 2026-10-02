@@ -66,14 +66,15 @@ const DEFAULT_INVOICES = [
 ];
 
 const DEFAULT_USER = {
-  fullName: '',
-  email: '',
-  businessName: '',
+  fullName: 'Saumya Mirajkar',
+  email: 'Saumyamir25@gmail.com',
+  businessName: 'AutoInvoice',
+  upiId: 'Saumyamir25@oksbi',
+  customQrUrl: '/qr_code.png',
   address: '',
   country: 'India',
   phone: '',
   website: '',
-  taxId: '',
   currency: 'INR - Indian Rupee',
   logo: ''
 };
@@ -271,7 +272,7 @@ const db = {
   resetAccount() {
     clients = [];
     invoices = [];
-    user = { ...DEFAULT_USER, fullName: '', businessName: '', address: '', phone: '', website: '', taxId: '', logo: '' };
+    user = { ...DEFAULT_USER, fullName: '', businessName: '', address: '', phone: '', website: '', logo: '' };
     writeJSON('clients.json', clients);
     writeJSON('invoices.json', invoices);
     writeJSON('users.json', user);

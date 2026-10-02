@@ -7,7 +7,9 @@ import {
   Plus,
   ArrowUpRight,
   Users2,
-  UserCircle
+  UserCircle,
+  ReceiptText,
+  AlertCircle
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { formatCurrency, getCurrencySymbol } from '../utils/currency';
@@ -17,7 +19,7 @@ export default function Dashboard({ stats, userProfile }) {
   const formatMoney = (val) => formatCurrency(val, userProfile?.currency);
   const currencySymbol = getCurrencySymbol(userProfile?.currency);
 
-  const userName = userProfile?.fullName || 'Zaid Shaikh';
+  const userName = userProfile?.fullName || 'User';
 
   return (
     <div className="content-page">
@@ -25,7 +27,7 @@ export default function Dashboard({ stats, userProfile }) {
       <div className="page-header">
         <div>
           <h1 className="page-title">Dashboard</h1>
-          <p className="page-subtitle">Welcome back, {userName}! Here's your invoicing overview.</p>
+          <p className="page-subtitle">Welcome back, {userName}! Here is your business & tax overview.</p>
         </div>
         <button
           className="btn-primary"
@@ -36,7 +38,7 @@ export default function Dashboard({ stats, userProfile }) {
         </button>
       </div>
 
-      {/* 4 Metric Cards */}
+      {/* 4 Primary Metric Cards */}
       <div className="metrics-grid">
         {/* Card 1: Total Invoices */}
         <div className="metric-card">
@@ -47,7 +49,9 @@ export default function Dashboard({ stats, userProfile }) {
             <span className="metric-label">Total Invoices</span>
           </div>
           <div className="metric-value">{stats?.totalInvoices ?? 0}</div>
-          <div className="metric-sub">+{stats?.totalInvoices ?? 0} this month</div>
+          <div className="metric-sub">
+            <span className="metric-trend up">Live</span> {stats?.paidCount ?? 0} Paid • {stats?.draftCount ?? 0} Drafts
+          </div>
         </div>
 
         {/* Card 2: Total Revenue */}
@@ -59,7 +63,9 @@ export default function Dashboard({ stats, userProfile }) {
             <span className="metric-label">Total Revenue ({currencySymbol})</span>
           </div>
           <div className="metric-value">{formatMoney(stats?.totalRevenue)}</div>
-          <div className="metric-sub">+{formatMoney(stats?.totalRevenue)} this month</div>
+          <div className="metric-sub">
+            <span className="metric-trend up">Collected</span> From {stats?.paidCount ?? 0} settled invoices
+          </div>
         </div>
 
         {/* Card 3: Pending Amount */}
@@ -68,11 +74,15 @@ export default function Dashboard({ stats, userProfile }) {
             <div className="metric-icon-box amber">
               <Clock size={18} />
             </div>
-            <span className="metric-label">Pending Amount ({currencySymbol})</span>
+            <span className="metric-label">Pending / Unpaid ({currencySymbol})</span>
           </div>
           <div className="metric-value">{formatMoney(stats?.pendingAmount)}</div>
           <div className="metric-sub">
-            {stats?.recentInvoices?.filter(i => i.status === 'sent').length || 0} invoices sent
+            {stats?.overdueCount > 0 ? (
+              <span style={{ color: '#ef4444', fontWeight: 600 }}>{stats.overdueCount} Overdue</span>
+            ) : (
+              <span>Pending settlement</span>
+            )}
           </div>
         </div>
 
@@ -85,7 +95,7 @@ export default function Dashboard({ stats, userProfile }) {
             <span className="metric-label">Total Clients</span>
           </div>
           <div className="metric-value">{stats?.totalClients ?? 0}</div>
-          <div className="metric-sub">Avg: {formatMoney(stats?.avgClientRevenue)}</div>
+          <div className="metric-sub">Avg: {formatMoney(stats?.avgClientRevenue)} / client</div>
         </div>
       </div>
 
@@ -94,20 +104,24 @@ export default function Dashboard({ stats, userProfile }) {
         {/* Left Box: Recent Invoices */}
         <div className="dash-box">
           <div className="dash-box-header">
-            <h3>Recent Invoices</h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <ReceiptText size={18} color="var(--accent-primary)" />
+              <h3>Recent Invoices</h3>
+            </div>
             <span
               className="view-all-link"
               onClick={() => navigate('/invoices')}
             >
-              View All
+              View All &rarr;
             </span>
           </div>
 
           <div className="recent-list">
             {(!stats?.recentInvoices || stats.recentInvoices.length === 0) ? (
-              <p style={{ color: '#94a3b8', fontSize: '13px', padding: '16px 0' }}>
-                No invoices created yet.
-              </p>
+              <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>
+                <ReceiptText size={32} style={{ margin: '0 auto 8px', opacity: 0.5 }} />
+                <p style={{ fontSize: '13px' }}>No invoices created yet.</p>
+              </div>
             ) : (
               stats.recentInvoices.map((inv) => (
                 <div key={inv.id} className="recent-item">
@@ -152,7 +166,7 @@ export default function Dashboard({ stats, userProfile }) {
               onClick={() => navigate('/invoices/create')}
             >
               <Plus size={16} />
-              Create New Invoice
+              Create Invoice
             </button>
             <button
               className="quick-action-btn outline"
@@ -166,7 +180,7 @@ export default function Dashboard({ stats, userProfile }) {
               onClick={() => navigate('/profile')}
             >
               <UserCircle size={16} />
-              Update Profile
+              Business Profile
             </button>
           </div>
 
@@ -178,6 +192,10 @@ export default function Dashboard({ stats, userProfile }) {
             <div>
               <div className="quick-stat-num">{stats?.draftCount ?? 0}</div>
               <div className="quick-stat-label">Drafts</div>
+            </div>
+            <div>
+              <div className="quick-stat-num">{stats?.overdueCount ?? 0}</div>
+              <div className="quick-stat-label">Overdue</div>
             </div>
           </div>
         </div>
