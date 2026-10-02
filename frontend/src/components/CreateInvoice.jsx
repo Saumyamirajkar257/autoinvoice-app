@@ -260,10 +260,22 @@ export default function CreateInvoice({ clients = [], onRefresh, showToast, user
       // Automatic PDF Download with selected template
       generateInvoicePDF(createdInvoice, userProfile, clientObj, language, activeCurrency, template);
 
-      // If status is 'sent', navigate to Invoices and prompt client email dispatch
+      // If status is 'sent', automatically dispatch email to client
       if (status === 'sent') {
-        showToast(`Invoice ${createdInvoice.id} created & PDF downloaded! Ready to dispatch email.`, 'success');
-        navigate('/invoices', { state: { emailInvoiceId: createdInvoice.id } });
+        const clientEmailAddr = clientObj?.email || createdInvoice.clientEmail;
+        if (clientEmailAddr) {
+          try {
+            await api.sendInvoiceEmail(createdInvoice.id, {
+              recipientEmail: clientEmailAddr.trim()
+            });
+            showToast(`Invoice ${createdInvoice.id} created & sent directly to ${clientEmailAddr}!`, 'success');
+          } catch (e) {
+            showToast(`Invoice ${createdInvoice.id} created & PDF downloaded!`, 'success');
+          }
+        } else {
+          showToast(`Invoice ${createdInvoice.id} created & PDF downloaded!`, 'success');
+        }
+        navigate('/invoices');
       } else {
         showToast(`Invoice ${createdInvoice.id} saved as draft & PDF downloaded!`, 'success');
         navigate('/invoices');

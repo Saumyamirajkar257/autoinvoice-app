@@ -19,10 +19,7 @@ import {
   Menu,
   X,
   Sun,
-  Moon,
-  Repeat,
-  Wallet,
-  CreditCard
+  Wallet
 } from 'lucide-react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { auth } from './firebase';
@@ -35,9 +32,7 @@ const Dashboard = lazy(() => import('./components/Dashboard'));
 const Clients = lazy(() => import('./components/Clients'));
 const Invoices = lazy(() => import('./components/Invoices'));
 const CreateInvoice = lazy(() => import('./components/CreateInvoice'));
-const RecurringInvoices = lazy(() => import('./components/RecurringInvoices'));
 const Expenses = lazy(() => import('./components/Expenses'));
-const Payments = lazy(() => import('./components/Payments'));
 const Profile = lazy(() => import('./components/Profile'));
 const Settings = lazy(() => import('./components/Settings'));
 const PublicPay = lazy(() => import('./components/PublicPay'));
@@ -316,30 +311,12 @@ export default function App() {
           </NavLink>
 
           <NavLink
-            to="/recurring"
-            onClick={closeMobileMenu}
-            className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
-          >
-            <Repeat size={18} />
-            Recurring
-          </NavLink>
-
-          <NavLink
             to="/expenses"
             onClick={closeMobileMenu}
             className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
           >
             <Wallet size={18} />
             Expenses
-          </NavLink>
-
-          <NavLink
-            to="/payments"
-            onClick={closeMobileMenu}
-            className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
-          >
-            <CreditCard size={18} />
-            Payments
           </NavLink>
 
           <NavLink
@@ -508,30 +485,9 @@ export default function App() {
                   }
                 />
                 <Route
-                  path="/recurring"
-                  element={
-                    <RecurringInvoices
-                      userProfile={userProfile}
-                      clients={clients}
-                      showToast={showToast}
-                      onRefresh={loadData}
-                    />
-                  }
-                />
-                <Route
                   path="/expenses"
                   element={
                     <Expenses
-                      userProfile={userProfile}
-                      showToast={showToast}
-                      onRefresh={loadData}
-                    />
-                  }
-                />
-                <Route
-                  path="/payments"
-                  element={
-                    <Payments
                       userProfile={userProfile}
                       showToast={showToast}
                       onRefresh={loadData}

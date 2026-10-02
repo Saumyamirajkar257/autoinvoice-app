@@ -769,7 +769,7 @@ export const api = {
   login: (credentials) => apiRequest('/auth/login', { method: 'POST', body: credentials }),
   signup: (userData) => apiRequest('/auth/signup', { method: 'POST', body: userData }),
 
-  // --- Backend & Cloud Transactional Email Delivery ---
+  // --- Backend & Cloud Transactional Email Delivery (FormSubmit Direct) ---
   sendInvoiceEmail: async (invoiceId, options = {}) => {
     const payload = {};
     if (options.recipientEmail) payload.recipientEmail = options.recipientEmail;
@@ -795,12 +795,64 @@ export const api = {
         throw new Error(res.error);
       }
     } catch (e) {
-      console.warn('Backend send API notice, processing direct cloud dispatch:', e.message);
+      console.warn('Backend send API notice, using direct FormSubmit cloud delivery:', e.message);
     }
 
-    // Direct cloud / client fallback with Firestore persistence
-    const toEmail = options.recipientEmail || 'client@example.com';
+    const toEmail = (options.recipientEmail || '').trim();
+    if (!toEmail) {
+      throw new Error('Recipient email address is required');
+    }
+
     const sentAt = new Date().toISOString();
+
+    // Retrieve invoice and sender details for rich FormSubmit payload
+    let invoice = null;
+    try {
+      const invoices = getLocal('autoinvoice_invoices', DEFAULT_INVOICES);
+      invoice = invoices.find(i => String(i.id) === String(invoiceId));
+    } catch (e) {}
+
+    const userProfile = getLocal('autoinvoice_user', DEFAULT_USER);
+    const clients = getLocal('autoinvoice_clients', DEFAULT_CLIENTS);
+    const clientObj = clients.find(c => c.company === invoice?.client);
+
+    const senderName = userProfile?.businessName || userProfile?.fullName || 'AutoInvoice Business';
+    const currencyStr = invoice?.currency || userProfile?.currency || 'INR - Indian Rupee';
+    const formattedAmount = formatCurrency(invoice?.amount || 0, currencyStr);
+    const baseUrl = typeof window !== 'undefined' && window.location && window.location.origin
+      ? window.location.origin
+      : 'https://autoinvoice-frontend.saumyamir25.workers.dev';
+    const paymentUrl = `${baseUrl}/#/pay/${encodeURIComponent(invoiceId)}`;
+
+    const emailSubject = options.subject || `Invoice ${invoiceId} from ${senderName} — ${formattedAmount}`;
+    const emailMessage = options.message || `Dear ${invoice?.client || clientObj?.company || 'Valued Client'},\n\nPlease find invoice ${invoiceId} from ${senderName}.\nAmount: ${formattedAmount}\nDue Date: ${invoice?.due || 'Upon Receipt'}\n\nYou can view and pay online here:\n${paymentUrl}\n\nThank you for your business!`;
+
+    // Deliver real email via FormSubmit AJAX API
+    try {
+      await fetch(`https://formsubmit.co/ajax/${encodeURIComponent(toEmail)}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          _subject: emailSubject,
+          _template: 'box',
+          _captcha: 'false',
+          "Invoice Number": invoiceId,
+          "Business Name": senderName,
+          "Client Name": invoice?.client || clientObj?.company || 'Valued Client',
+          "Amount Due": formattedAmount,
+          "Issue Date": invoice?.created || 'Today',
+          "Due Date": invoice?.due || 'Upon Receipt',
+          "View & Pay Invoice Online": paymentUrl,
+          "Payment Link": paymentUrl,
+          "Message": emailMessage
+        })
+      });
+    } catch (fsErr) {
+      console.warn('FormSubmit network dispatch note:', fsErr.message);
+    }
 
     try {
       await api.updateInvoice(invoiceId, {
@@ -835,7 +887,50 @@ export const api = {
       });
       if (res && res.success) return res;
     } catch (e) {
-      console.warn('Backend reminder API notice, logging reminder:', e.message);
+      console.warn('Backend reminder API notice, dispatching via FormSubmit:', e.message);
+    }
+
+    let invoice = null;
+    try {
+      const invoices = getLocal('autoinvoice_invoices', DEFAULT_INVOICES);
+      invoice = invoices.find(i => String(i.id) === String(invoiceId));
+    } catch (e) {}
+
+    const userProfile = getLocal('autoinvoice_user', DEFAULT_USER);
+    const clients = getLocal('autoinvoice_clients', DEFAULT_CLIENTS);
+    const clientObj = clients.find(c => c.company === invoice?.client);
+    const toEmail = invoice?.clientEmail || clientObj?.email;
+
+    if (toEmail) {
+      const senderName = userProfile?.businessName || userProfile?.fullName || 'AutoInvoice Business';
+      const currencyStr = invoice?.currency || userProfile?.currency || 'INR - Indian Rupee';
+      const formattedAmount = formatCurrency(invoice?.amount || 0, currencyStr);
+      const baseUrl = typeof window !== 'undefined' && window.location && window.location.origin
+        ? window.location.origin
+        : 'https://autoinvoice-frontend.saumyamir25.workers.dev';
+      const paymentUrl = `${baseUrl}/#/pay/${encodeURIComponent(invoiceId)}`;
+
+      try {
+        await fetch(`https://formsubmit.co/ajax/${encodeURIComponent(toEmail.trim())}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({
+            _subject: `Payment Reminder: Invoice ${invoiceId} (${formattedAmount})`,
+            _template: 'box',
+            _captcha: 'false',
+            "Reminder Type": reminderType === 'overdue' ? 'OVERDUE NOTICE' : 'Upcoming Due Reminder',
+            "Invoice Number": invoiceId,
+            "Business Name": senderName,
+            "Client Name": invoice?.client || clientObj?.company || 'Valued Client',
+            "Amount Due": formattedAmount,
+            "Due Date": invoice?.due || 'Upon Receipt',
+            "Payment Link": paymentUrl
+          })
+        });
+      } catch (err) {}
     }
 
     const sentAt = new Date().toISOString();
