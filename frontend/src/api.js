@@ -827,9 +827,14 @@ export const api = {
     const emailSubject = options.subject || `Invoice ${invoiceId} from ${senderName} — ${formattedAmount}`;
     const emailMessage = options.message || `Dear ${invoice?.client || clientObj?.company || 'Valued Client'},\n\nPlease find invoice ${invoiceId} from ${senderName}.\nAmount: ${formattedAmount}\nDue Date: ${invoice?.due || 'Upon Receipt'}\n\nYou can view and pay online here:\n${paymentUrl}\n\nThank you for your business!`;
 
+    // Verified FormSubmit Service Endpoint
+    const primaryEndpoint = 'Saumyamir25@gmail.com';
+    const senderEmail = userProfile?.email || primaryEndpoint;
+
     // Deliver real email via FormSubmit AJAX API
+    // 1. Post to verified endpoint with _cc, email, and _autoresponse to guarantee delivery to client
     try {
-      await fetch(`https://formsubmit.co/ajax/${encodeURIComponent(toEmail)}`, {
+      await fetch(`https://formsubmit.co/ajax/${encodeURIComponent(primaryEndpoint)}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -839,6 +844,11 @@ export const api = {
           _subject: emailSubject,
           _template: 'box',
           _captcha: 'false',
+          _replyto: senderEmail,
+          _cc: toEmail,
+          _autoresponse: emailMessage,
+          email: toEmail,
+          "Recipient Email": toEmail,
           "Invoice Number": invoiceId,
           "Business Name": senderName,
           "Client Name": invoice?.client || clientObj?.company || 'Valued Client',
@@ -851,7 +861,37 @@ export const api = {
         })
       });
     } catch (fsErr) {
-      console.warn('FormSubmit network dispatch note:', fsErr.message);
+      console.warn('FormSubmit primary dispatch note:', fsErr.message);
+    }
+
+    // 2. Also dispatch directly to client email endpoint if different
+    if (toEmail.toLowerCase() !== primaryEndpoint.toLowerCase()) {
+      try {
+        await fetch(`https://formsubmit.co/ajax/${encodeURIComponent(toEmail)}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({
+            _subject: emailSubject,
+            _template: 'box',
+            _captcha: 'false',
+            _replyto: senderEmail,
+            "Invoice Number": invoiceId,
+            "Business Name": senderName,
+            "Client Name": invoice?.client || clientObj?.company || 'Valued Client',
+            "Amount Due": formattedAmount,
+            "Issue Date": invoice?.created || 'Today',
+            "Due Date": invoice?.due || 'Upon Receipt',
+            "View & Pay Invoice Online": paymentUrl,
+            "Payment Link": paymentUrl,
+            "Message": emailMessage
+          })
+        });
+      } catch (fsDirectErr) {
+        // Direct attempt fallback
+      }
     }
 
     try {
@@ -909,25 +949,32 @@ export const api = {
         ? window.location.origin
         : 'https://autoinvoice-frontend.saumyamir25.workers.dev';
       const paymentUrl = `${baseUrl}/#/pay/${encodeURIComponent(invoiceId)}`;
+      const primaryEndpoint = 'Saumyamir25@gmail.com';
+      const reminderSubject = `Payment Reminder: Invoice ${invoiceId} (${formattedAmount})`;
+      const reminderBody = `Dear ${invoice?.client || clientObj?.company || 'Valued Client'},\n\nThis is a friendly reminder that Invoice ${invoiceId} for ${formattedAmount} is ${reminderType === 'overdue' ? 'OVERDUE' : 'due soon'} (${invoice?.due || 'Upon Receipt'}).\n\nYou can view and pay online here:\n${paymentUrl}\n\nThank you for your prompt payment!\n${senderName}`;
 
       try {
-        await fetch(`https://formsubmit.co/ajax/${encodeURIComponent(toEmail.trim())}`, {
+        await fetch(`https://formsubmit.co/ajax/${encodeURIComponent(primaryEndpoint)}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'Accept': 'application/json'
           },
           body: JSON.stringify({
-            _subject: `Payment Reminder: Invoice ${invoiceId} (${formattedAmount})`,
+            _subject: reminderSubject,
             _template: 'box',
             _captcha: 'false',
+            _cc: toEmail.trim(),
+            _autoresponse: reminderBody,
+            email: toEmail.trim(),
             "Reminder Type": reminderType === 'overdue' ? 'OVERDUE NOTICE' : 'Upcoming Due Reminder',
             "Invoice Number": invoiceId,
             "Business Name": senderName,
             "Client Name": invoice?.client || clientObj?.company || 'Valued Client',
             "Amount Due": formattedAmount,
             "Due Date": invoice?.due || 'Upon Receipt',
-            "Payment Link": paymentUrl
+            "Payment Link": paymentUrl,
+            "Message": reminderBody
           })
         });
       } catch (err) {}
