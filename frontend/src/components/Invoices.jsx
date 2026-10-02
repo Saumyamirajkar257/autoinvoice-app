@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Plus,
   Search,
@@ -41,17 +41,28 @@ export default function Invoices({ invoices = [], onRefresh, showToast, userProf
   const [emailModalType, setEmailModalType] = useState('invoice'); // 'invoice' | 'reminder' | 'receipt'
   const [emailModalReminderType, setEmailModalReminderType] = useState('upcoming');
 
-  // Auto-open email modal if directed from CreateInvoice
+  const autoOpenedEmailRef = useRef(null);
+
+  // Auto-open email modal if directed from CreateInvoice (guaranteed once only)
   useEffect(() => {
-    if (location.state?.emailInvoiceId && invoices.length > 0) {
-      const found = invoices.find(i => String(i.id) === String(location.state.emailInvoiceId));
+    const targetId = location.state?.emailInvoiceId;
+    if (targetId && invoices.length > 0 && autoOpenedEmailRef.current !== targetId) {
+      autoOpenedEmailRef.current = targetId;
+      const found = invoices.find(i => String(i.id) === String(targetId));
       if (found) {
         setEmailModalInvoice(found);
         setEmailModalType('invoice');
-        window.history.replaceState({}, document.title);
       }
+      navigate(location.pathname, { replace: true, state: {} });
     }
-  }, [location.state, invoices]);
+  }, [location.state, invoices, navigate, location.pathname]);
+
+  const handleCloseEmailModal = () => {
+    setEmailModalInvoice(null);
+    if (location.state?.emailInvoiceId) {
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  };
 
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1);
@@ -751,7 +762,7 @@ export default function Invoices({ invoices = [], onRefresh, showToast, userProf
           userProfile={userProfile}
           clients={clients}
           payment={emailModalInvoice.payment}
-          onClose={() => setEmailModalInvoice(null)}
+          onClose={handleCloseEmailModal}
           onRefresh={onRefresh}
           showToast={showToast}
         />

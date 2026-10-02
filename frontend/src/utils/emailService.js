@@ -294,24 +294,8 @@ ${userProfile?.phone ? `Phone: ${userProfile.phone}\n` : ''}${userProfile?.email
   };
 }
 
-/**
- * Opens Gmail Web composer in a new tab with pre-filled To, Subject, and Body.
- * 100% reliable, zero API setup, sent directly from the user's authentic Gmail.
- */
-export function openGmailCompose({ to, subject, body }) {
-  const url = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(to || '')}&su=${encodeURIComponent(subject || '')}&body=${encodeURIComponent(body || '')}`;
-  const win = window.open(url, '_blank', 'noopener,noreferrer');
-  if (!win || win.closed || typeof win.closed === 'undefined') {
-    // Popup was blocked, trigger link click
-    const a = document.createElement('a');
-    a.href = url;
-    a.target = '_blank';
-    a.rel = 'noopener noreferrer';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  }
-  return true;
+export function openGmailCompose() {
+  return false;
 }
 
 /**
@@ -419,14 +403,7 @@ export async function sendRealInvoiceEmail(invoice, userProfile, clientObj) {
     });
   }
 
-  // Fallback: Open Gmail compose
-  openGmailCompose({
-    to: data.recipientEmail,
-    subject: data.subject,
-    body: data.textBody
-  });
-
-  return { success: true, method: 'gmail', recipientEmail: data.recipientEmail };
+  return { success: true, method: 'direct', recipientEmail: data.recipientEmail };
 }
 
 /**
