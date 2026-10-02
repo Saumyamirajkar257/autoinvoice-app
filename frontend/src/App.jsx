@@ -19,6 +19,7 @@ import {
   Menu,
   X,
   Sun,
+  Moon,
   Wallet
 } from 'lucide-react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
