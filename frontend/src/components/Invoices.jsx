@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
-import { generateInvoicePDF } from './pdfGenerator';
+import { generateInvoicePDF, previewInvoicePDF } from './pdfGenerator';
 import { generateReceiptPDF } from './receiptGenerator';
 import { formatCurrency } from '../utils/currency';
 import PaymentModal from './PaymentModal';
@@ -32,6 +32,7 @@ export default function Invoices({ invoices = [], onRefresh, showToast, userProf
   const [sendingEmail, setSendingEmail] = useState(null);
   const [paymentModalInvoice, setPaymentModalInvoice] = useState(null);
   const [selectedDetailInvoice, setSelectedDetailInvoice] = useState(null);
+  const [detailTemplate, setDetailTemplate] = useState('modern');
 
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1);
@@ -62,13 +63,22 @@ export default function Invoices({ invoices = [], onRefresh, showToast, userProf
     }
   };
 
-  const handleDownloadPDF = (invoice) => {
+  const handleDownloadPDF = (invoice, templateOverride) => {
     const clientObj = clients.find(c => c.company === invoice.client);
     const lang = invoice.language || userProfile?.language || 'English';
     const curr = invoice.currency || userProfile?.currency || 'INR - Indian Rupee';
-    const tmpl = invoice.template || userProfile?.defaultTemplate || 'modern';
+    const tmpl = templateOverride || invoice.template || userProfile?.defaultTemplate || 'modern';
     generateInvoicePDF(invoice, userProfile, clientObj, lang, curr, tmpl);
     showToast(`Downloaded ${invoice.id}_${tmpl}.pdf`, 'info');
+  };
+
+  const handlePreviewPDF = (invoice, templateOverride) => {
+    const clientObj = clients.find(c => c.company === invoice.client);
+    const lang = invoice.language || userProfile?.language || 'English';
+    const curr = invoice.currency || userProfile?.currency || 'INR - Indian Rupee';
+    const tmpl = templateOverride || invoice.template || userProfile?.defaultTemplate || 'modern';
+    previewInvoicePDF(invoice, userProfile, clientObj, lang, curr, tmpl);
+    showToast(`Opening live preview in ${tmpl.toUpperCase()} format...`, 'info');
   };
 
   const handleDownloadReceipt = (invoice) => {
@@ -526,13 +536,37 @@ export default function Invoices({ invoices = [], onRefresh, showToast, userProf
               </div>
             </div>
 
-            <div className="custom-modal-footer">
-              <button
-                className="btn-secondary btn-sm"
-                onClick={() => handleDownloadPDF(selectedDetailInvoice)}
-              >
-                <Download size={14} /> Download PDF
-              </button>
+            <div className="custom-modal-footer" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>Template:</span>
+                <select
+                  className="form-select"
+                  style={{ width: 'auto', padding: '4px 8px', fontSize: '12px', height: '30px', fontWeight: 600 }}
+                  value={detailTemplate}
+                  onChange={(e) => setDetailTemplate(e.target.value)}
+                >
+                  <option value="modern">Modern Clean</option>
+                  <option value="classic">Classic Corporate</option>
+                  <option value="minimal">Minimalist</option>
+                  <option value="gst_pro">Executive Pro</option>
+                </select>
+                <button
+                  type="button"
+                  className="btn-secondary btn-sm"
+                  onClick={() => handlePreviewPDF(selectedDetailInvoice, detailTemplate)}
+                  title="Preview PDF in this template"
+                >
+                  <Eye size={13} /> Preview
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary btn-sm"
+                  onClick={() => handleDownloadPDF(selectedDetailInvoice, detailTemplate)}
+                  title="Download PDF in this template"
+                >
+                  <Download size={13} /> Download
+                </button>
+              </div>
               {selectedDetailInvoice.status === 'paid' && (
                 <>
                   <button

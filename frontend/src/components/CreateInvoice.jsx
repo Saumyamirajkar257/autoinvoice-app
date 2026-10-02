@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Plus, Trash2, CheckCircle2, Send, Save, RefreshCw, DollarSign, LayoutTemplate, ChevronDown, ChevronUp, Eye } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, CheckCircle2, Send, Save, RefreshCw, DollarSign, LayoutTemplate, ChevronDown, ChevronUp, Eye, Download } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { generateInvoicePDF, previewInvoicePDF } from './pdfGenerator';
@@ -122,6 +122,77 @@ export default function CreateInvoice({ clients = [], onRefresh, showToast, user
       }
       return item;
     }));
+  };
+
+  // Build current preview invoice data
+  const buildCurrentInvoiceMock = () => {
+    const validItems = items.filter(item => (item.description || '').trim() !== '');
+    const clientObj = clients.find(c => c.company === selectedClient);
+    return {
+      id: 'INV-PREVIEW',
+      client: selectedClient || 'Sample Client Ltd',
+      clientEmail: clientObj?.email || 'client@example.com',
+      due: dueDate || 'Not set',
+      created: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+      language: language,
+      currency: activeCurrency,
+      template: template,
+      description: validItems[0]?.description || 'Professional Consulting Service',
+      items: validItems.length > 0 ? validItems.map(item => ({
+        description: item.description,
+        hsnSac: hsnSac || '',
+        quantity: Number(item.quantity) || 1,
+        rate: Number(item.rate) || 0,
+        amount: (Number(item.quantity) || 1) * (Number(item.rate) || 0)
+      })) : [{ description: 'Professional Consulting Service', quantity: 1, rate: Math.max(subtotal, 1000), amount: Math.max(subtotal, 1000) }],
+      quantity: Number(validItems[0]?.quantity) || 1,
+      rate: Number(validItems[0]?.rate) || 0,
+      discount: Number(discount) || 0,
+      tax: Number(taxRate) || 0,
+      subtotal: Number(subtotal.toFixed(2)),
+      discountAmount: Number(discountAmount.toFixed(2)),
+      taxAmount: Number(taxAmount.toFixed(2)),
+      amount: Number((total || 1000).toFixed(2)),
+      notes: notes.trim(),
+      status: 'draft',
+      gstEnabled,
+      gstType,
+      hsnSac,
+      placeOfSupply,
+      reverseCharge,
+      gstin: userProfile?.gstin || userProfile?.businessGstin || '',
+      clientGstin: clientObj?.gstin || '',
+      cgstRate,
+      sgstRate,
+      igstRate,
+      cgstAmount: Number(cgstAmount.toFixed(2)),
+      sgstAmount: Number(sgstAmount.toFixed(2)),
+      igstAmount: Number(igstAmount.toFixed(2))
+    };
+  };
+
+  const handlePreviewPDF = () => {
+    try {
+      const mock = buildCurrentInvoiceMock();
+      const clientObj = clients.find(c => c.company === selectedClient);
+      previewInvoicePDF(mock, userProfile, clientObj, language, activeCurrency, template);
+      showToast(`Opened live preview in ${template.toUpperCase()} template!`, 'info');
+    } catch (err) {
+      console.error('PDF preview error:', err);
+      showToast('Could not preview PDF: ' + err.message, 'error');
+    }
+  };
+
+  const handleDownloadSamplePDF = () => {
+    try {
+      const mock = buildCurrentInvoiceMock();
+      const clientObj = clients.find(c => c.company === selectedClient);
+      generateInvoicePDF(mock, userProfile, clientObj, language, activeCurrency, template);
+      showToast(`Downloaded sample PDF in ${template.toUpperCase()} template!`, 'success');
+    } catch (err) {
+      console.error('PDF download error:', err);
+      showToast('Could not download PDF: ' + err.message, 'error');
+    }
   };
 
   // Submit invoice
@@ -293,15 +364,26 @@ export default function CreateInvoice({ clients = [], onRefresh, showToast, user
                 <LayoutTemplate size={18} color="var(--accent-primary)" />
                 <h3 className="card-title" style={{ margin: 0 }}>Select PDF Template</h3>
               </div>
-              <button
-                type="button"
-                className="btn-secondary btn-sm"
-                onClick={handlePreviewPDF}
-                style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-                title="Preview current invoice in this template"
-              >
-                <Eye size={14} /> Preview Live PDF
-              </button>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn-secondary btn-sm"
+                  onClick={handlePreviewPDF}
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                  title="Preview current invoice in this template"
+                >
+                  <Eye size={14} /> Preview Live PDF
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary btn-sm"
+                  onClick={handleDownloadSamplePDF}
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                  title="Download a sample PDF in this template"
+                >
+                  <Download size={14} /> Sample PDF
+                </button>
+              </div>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px' }} className="template-grid">
               {[

@@ -20,14 +20,14 @@ export default function RevenueChart({ invoices = [], expenses = [], userProfile
     const rev = invoices.filter(inv => {
       if (inv.status !== 'paid' && inv.status !== 'verified') return false;
       const invDate = new Date(inv.paidAt || inv.due || inv.created);
-      return !isNaN(invDate) && invDate.getMonth() === m && invDate.getFullYear() === y;
+      return !isNaN(invDate.getTime()) && invDate.getMonth() === m && invDate.getFullYear() === y;
     }).reduce((sum, inv) => sum + (Number(inv.amount) || 0), 0);
 
     // Filter expenses in this month
     const exp = expenses.filter(e => {
       if (!e.date) return false;
       const expDate = new Date(e.date);
-      return !isNaN(expDate) && expDate.getMonth() === m && expDate.getFullYear() === y;
+      return !isNaN(expDate.getTime()) && expDate.getMonth() === m && expDate.getFullYear() === y;
     }).reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
 
     monthsData.push({

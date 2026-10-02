@@ -19,11 +19,14 @@ import {
   Menu,
   X,
   Sun,
-  Moon
+  Moon,
+  Repeat,
+  Wallet
 } from 'lucide-react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { auth } from './firebase';
 import { api } from './api';
+import ErrorBoundary from './components/ErrorBoundary';
 
 // Lazy load route components for code splitting
 const Auth = lazy(() => import('./components/Auth'));
@@ -31,6 +34,8 @@ const Dashboard = lazy(() => import('./components/Dashboard'));
 const Clients = lazy(() => import('./components/Clients'));
 const Invoices = lazy(() => import('./components/Invoices'));
 const CreateInvoice = lazy(() => import('./components/CreateInvoice'));
+const RecurringInvoices = lazy(() => import('./components/RecurringInvoices'));
+const Expenses = lazy(() => import('./components/Expenses'));
 const Profile = lazy(() => import('./components/Profile'));
 const Settings = lazy(() => import('./components/Settings'));
 const PublicPay = lazy(() => import('./components/PublicPay'));
@@ -88,6 +93,7 @@ export default function App() {
   const [stats, setStats] = useState(null);
   const [clients, setClients] = useState([]);
   const [invoices, setInvoices] = useState([]);
+  const [expenses, setExpenses] = useState([]);
   const [userProfile, setUserProfile] = useState({});
   const [toasts, setToasts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -134,16 +140,18 @@ export default function App() {
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      const [dashStats, clientsData, invoicesData, profileData] = await Promise.all([
+      const [dashStats, clientsData, invoicesData, profileData, expensesData] = await Promise.all([
         api.getDashboard().catch(() => null),
         api.getClients().catch(() => []),
         api.getInvoices().catch(() => []),
-        api.getProfile().catch(() => ({}))
+        api.getProfile().catch(() => ({})),
+        api.getExpenses().catch(() => [])
       ]);
 
       if (dashStats) setStats(dashStats);
       if (clientsData) setClients(clientsData);
       if (invoicesData) setInvoices(invoicesData);
+      if (expensesData) setExpenses(expensesData);
       if (profileData) {
         setUserProfile(profileData);
         if (profileData.fullName) {
@@ -306,6 +314,24 @@ export default function App() {
           </NavLink>
 
           <NavLink
+            to="/recurring"
+            onClick={closeMobileMenu}
+            className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+          >
+            <Repeat size={18} />
+            Recurring
+          </NavLink>
+
+          <NavLink
+            to="/expenses"
+            onClick={closeMobileMenu}
+            className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+          >
+            <Wallet size={18} />
+            Expenses
+          </NavLink>
+
+          <NavLink
             to="/profile"
             onClick={closeMobileMenu}
             className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
@@ -422,78 +448,103 @@ export default function App() {
 
         {/* Dynamic Page Routes */}
         <main>
-          <Suspense fallback={<PageLoader />}>
-            <Routes>
-              <Route path="/" element={<Navigate to="/dashboard" replace />} />
-              <Route
-                path="/dashboard"
-                element={
-                  <Dashboard
-                    stats={stats}
-                    userProfile={userProfile}
-                  />
-                }
-              />
-              <Route
-                path="/clients"
-                element={
-                  <Clients
-                    clients={clients}
-                    onRefresh={loadData}
-                    showToast={showToast}
-                  />
-                }
-              />
-              <Route
-                path="/invoices"
-                element={
-                  <Invoices
-                    invoices={invoices}
-                    clients={clients}
-                    userProfile={userProfile}
-                    onRefresh={loadData}
-                    showToast={showToast}
-                  />
-                }
-              />
-              <Route
-                path="/invoices/create"
-                element={
-                  <CreateInvoice
-                    clients={clients}
-                    userProfile={userProfile}
-                    onRefresh={loadData}
-                    showToast={showToast}
-                  />
-                }
-              />
-              <Route
-                path="/profile"
-                element={
-                  <Profile
-                    userProfile={userProfile}
-                    onRefresh={loadData}
-                    showToast={showToast}
-                    currentTheme={theme}
-                    onThemeChange={setTheme}
-                  />
-                }
-              />
-              <Route
-                path="/settings"
-                element={
-                  <Settings
-                    onRefresh={loadData}
-                    onLogout={handleLogout}
-                    showToast={showToast}
-                  />
-                }
-              />
-              <Route path="/pay/:invId" element={<PublicPay />} />
-              <Route path="/pay" element={<PublicPay />} />
-              <Route path="*" element={<Navigate to="/dashboard" replace />} />
-            </Routes>
-          </Suspense>
+          <ErrorBoundary>
+            <Suspense fallback={<PageLoader />}>
+              <Routes>
+                <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                <Route
+                  path="/dashboard"
+                  element={
+                    <Dashboard
+                      stats={stats}
+                      userProfile={userProfile}
+                      invoices={invoices}
+                      expenses={expenses}
+                    />
+                  }
+                />
+                <Route
+                  path="/clients"
+                  element={
+                    <Clients
+                      clients={clients}
+                      onRefresh={loadData}
+                      showToast={showToast}
+                    />
+                  }
+                />
+                <Route
+                  path="/invoices"
+                  element={
+                    <Invoices
+                      invoices={invoices}
+                      clients={clients}
+                      userProfile={userProfile}
+                      onRefresh={loadData}
+                      showToast={showToast}
+                    />
+                  }
+                />
+                <Route
+                  path="/invoices/create"
+                  element={
+                    <CreateInvoice
+                      clients={clients}
+                      userProfile={userProfile}
+                      onRefresh={loadData}
+                      showToast={showToast}
+                    />
+                  }
+                />
+                <Route
+                  path="/recurring"
+                  element={
+                    <RecurringInvoices
+                      userProfile={userProfile}
+                      clients={clients}
+                      showToast={showToast}
+                      onRefresh={loadData}
+                    />
+                  }
+                />
+                <Route
+                  path="/expenses"
+                  element={
+                    <Expenses
+                      userProfile={userProfile}
+                      showToast={showToast}
+                      onRefresh={loadData}
+                    />
+                  }
+                />
+                <Route
+                  path="/profile"
+                  element={
+                    <Profile
+                      userProfile={userProfile}
+                      onRefresh={loadData}
+                      showToast={showToast}
+                      currentTheme={theme}
+                      onThemeChange={setTheme}
+                    />
+                  }
+                />
+                <Route
+                  path="/settings"
+                  element={
+                    <Settings
+                      onRefresh={loadData}
+                      onLogout={handleLogout}
+                      showToast={showToast}
+                    />
+                  }
+                />
+                <Route path="/pay/:invId" element={<PublicPay />} />
+                <Route path="/pay" element={<PublicPay />} />
+                <Route path="*" element={<Navigate to="/dashboard" replace />} />
+              </Routes>
+            </Suspense>
+          </ErrorBoundary>
         </main>
       </div>
 

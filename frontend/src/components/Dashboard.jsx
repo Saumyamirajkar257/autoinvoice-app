@@ -13,8 +13,9 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { formatCurrency, getCurrencySymbol } from '../utils/currency';
+import RevenueChart from './RevenueChart';
 
-export default function Dashboard({ stats, userProfile }) {
+export default function Dashboard({ stats, userProfile, invoices = [], expenses = [] }) {
   const navigate = useNavigate();
   const formatMoney = (val) => formatCurrency(val, userProfile?.currency);
   const currencySymbol = getCurrencySymbol(userProfile?.currency);
@@ -97,6 +98,11 @@ export default function Dashboard({ stats, userProfile }) {
           <div className="metric-value">{stats?.totalClients ?? 0}</div>
           <div className="metric-sub">Avg: {formatMoney(stats?.avgClientRevenue)} / client</div>
         </div>
+      </div>
+
+      {/* 6-Month Visual Financial Overview */}
+      <div style={{ marginBottom: '24px' }}>
+        <RevenueChart invoices={invoices} expenses={expenses} userProfile={userProfile} />
       </div>
 
       {/* Two Column Grid: Recent Invoices & Quick Actions */}

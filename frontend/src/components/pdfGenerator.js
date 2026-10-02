@@ -27,8 +27,16 @@ export function buildInvoicePDFDoc(invoice, userProfile, clientObj, languageOver
 
   // Normalize and resolve template
   const rawTemplate = String(templateOverride || invoice?.template || p.defaultTemplate || 'modern').toLowerCase().trim();
-  const validTemplates = ['modern', 'classic', 'minimal', 'gst_pro'];
-  const template = validTemplates.includes(rawTemplate) ? rawTemplate : 'modern';
+  let template = 'modern';
+  if (rawTemplate.includes('classic')) {
+    template = 'classic';
+  } else if (rawTemplate.includes('minimal')) {
+    template = 'minimal';
+  } else if (rawTemplate.includes('gst') || rawTemplate.includes('pro') || rawTemplate.includes('exec')) {
+    template = 'gst_pro';
+  } else {
+    template = 'modern';
+  }
 
   const items = Array.isArray(invoice?.items) && invoice.items.length > 0
     ? invoice.items
@@ -62,7 +70,30 @@ export function previewInvoicePDF(invoice, userProfile, clientObj, languageOverr
   const { doc } = buildInvoicePDFDoc(invoice, userProfile, clientObj, languageOverride, currencyOverride, templateOverride);
   const blob = doc.output('blob');
   const blobUrl = URL.createObjectURL(blob);
-  window.open(blobUrl, '_blank');
+  try {
+    const win = window.open(blobUrl, '_blank');
+    if (!win || win.closed || typeof win.closed === 'undefined') {
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        try { document.body.removeChild(a); } catch (e) {}
+      }, 2000);
+    }
+  } catch (e) {
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      try { document.body.removeChild(a); } catch (err) {}
+    }, 2000);
+  }
   return blobUrl;
 }
 
@@ -306,7 +337,8 @@ function renderClassicTemplate(doc, invoice, p, c, items, t, formatMoney, curren
     const r = Number(item.rate) || 0;
     doc.rect(16, y, pageW - 32, 7);
     doc.text(String(idx + 1), 19, y + 5);
-    doc.text(item.description || 'Item', 26, y + 5);
+    const descLines = doc.splitTextToSize(String(item.description || 'Item'), 98);
+    doc.text(descLines[0] || 'Item', 26, y + 5);
     doc.text(String(q), 128, y + 5, { align: 'center' });
     doc.text(formatMoney(r), 152, y + 5, { align: 'center' });
     doc.text(formatMoney(q * r), pageW - 20, y + 5, { align: 'right' });
@@ -316,7 +348,7 @@ function renderClassicTemplate(doc, invoice, p, c, items, t, formatMoney, curren
   // Right Side Totals
   y += 4;
   const rightX = pageW / 2 + 3;
-  doc.rect(rightX, y, 86, 30);
+  const startTotalsY = y;
   let rY = y + 6;
   doc.setFontSize(8.5);
   doc.text('Subtotal:', rightX + 4, rY);
@@ -338,6 +370,9 @@ function renderClassicTemplate(doc, invoice, p, c, items, t, formatMoney, curren
   doc.setFontSize(10.5);
   doc.text('GRAND TOTAL:', rightX + 4, rY);
   doc.text(formatMoney(invoice.amount), pageW - 20, rY, { align: 'right' });
+
+  const boxHeight = (rY - startTotalsY) + 5;
+  doc.rect(rightX, startTotalsY, 86, boxHeight);
 
   if (invoice.notes) {
     doc.setFont('helvetica', 'bold');
@@ -457,6 +492,19 @@ function renderMinimalTemplate(doc, invoice, p, c, items, t, formatMoney, curren
   doc.text('Total:', sumR - 55, y + 4);
   doc.text(formatMoney(invoice.amount), sumR, y + 4, { align: 'right' });
 
+  if (invoice.notes) {
+    y += 14;
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text('Notes & Terms:', 18, y);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(71, 85, 105);
+    const lines = doc.splitTextToSize(String(invoice.notes || ''), 160);
+    doc.text(lines, 18, y + 4.5);
+  }
+
   renderFooter(doc, pageW, pageH, 'Minimalist Elegance Template', invoice);
 }
 
@@ -522,7 +570,8 @@ function renderGSTProTemplate(doc, invoice, p, c, items, t, formatMoney, currenc
     const r = Number(item.rate) || 0;
     const lineTotal = q * r;
     doc.line(14, y, pageW - 14, y);
-    doc.text(item.description || 'Service', 18, y + 4.5);
+    const descLines = doc.splitTextToSize(String(item.description || 'Service'), 92);
+    doc.text(descLines[0] || 'Service', 18, y + 4.5);
     doc.text(String(q), 115, y + 4.5, { align: 'center' });
     doc.text(formatMoney(r), 140, y + 4.5, { align: 'center' });
     doc.text(formatMoney(lineTotal), pageW - 18, y + 4.5, { align: 'right' });
@@ -534,13 +583,19 @@ function renderGSTProTemplate(doc, invoice, p, c, items, t, formatMoney, currenc
   // Summary Table on Right
   y += 4;
   const rightX = pageW / 2 + 5;
-  doc.rect(rightX, y, 83, 26);
+  const startTotalsY = y;
   let rY = y + 5.5;
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8.5);
   doc.text('Subtotal:', rightX + 4, rY);
   doc.text(formatMoney(invoice.subtotal || invoice.amount), pageW - 18, rY, { align: 'right' });
   rY += 5;
+
+  if (Number(invoice.discount) > 0) {
+    doc.text(`Discount (${invoice.discount}%):`, rightX + 4, rY);
+    doc.text('-' + formatMoney(invoice.discountAmount), pageW - 18, rY, { align: 'right' });
+    rY += 5;
+  }
 
   rY = renderTaxSummaryLines(doc, invoice, formatMoney, rightX + 4, rY, pageW - 18);
 
@@ -551,13 +606,16 @@ function renderGSTProTemplate(doc, invoice, p, c, items, t, formatMoney, currenc
   doc.text('TOTAL AMOUNT:', rightX + 4, rY);
   doc.text(formatMoney(invoice.amount), pageW - 18, rY, { align: 'right' });
 
+  const boxHeight = (rY - startTotalsY) + 4;
+  doc.rect(rightX, startTotalsY, 83, boxHeight);
+
   if (invoice.notes) {
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(8);
     doc.text('Notes:', 18, y + 6);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(7.5);
-    doc.text(doc.splitTextToSize(invoice.notes, 80), 18, y + 11);
+    doc.text(doc.splitTextToSize(String(invoice.notes || ''), 80), 18, y + 11);
   }
 
   renderFooter(doc, pageW, pageH, 'Executive Pro Template', invoice);
