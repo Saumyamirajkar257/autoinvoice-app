@@ -21,7 +21,8 @@ import {
   Sun,
   Moon,
   Repeat,
-  Wallet
+  Wallet,
+  CreditCard
 } from 'lucide-react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { auth } from './firebase';
@@ -36,6 +37,7 @@ const Invoices = lazy(() => import('./components/Invoices'));
 const CreateInvoice = lazy(() => import('./components/CreateInvoice'));
 const RecurringInvoices = lazy(() => import('./components/RecurringInvoices'));
 const Expenses = lazy(() => import('./components/Expenses'));
+const Payments = lazy(() => import('./components/Payments'));
 const Profile = lazy(() => import('./components/Profile'));
 const Settings = lazy(() => import('./components/Settings'));
 const PublicPay = lazy(() => import('./components/PublicPay'));
@@ -332,6 +334,15 @@ export default function App() {
           </NavLink>
 
           <NavLink
+            to="/payments"
+            onClick={closeMobileMenu}
+            className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+          >
+            <CreditCard size={18} />
+            Payments
+          </NavLink>
+
+          <NavLink
             to="/profile"
             onClick={closeMobileMenu}
             className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
@@ -511,6 +522,16 @@ export default function App() {
                   path="/expenses"
                   element={
                     <Expenses
+                      userProfile={userProfile}
+                      showToast={showToast}
+                      onRefresh={loadData}
+                    />
+                  }
+                />
+                <Route
+                  path="/payments"
+                  element={
+                    <Payments
                       userProfile={userProfile}
                       showToast={showToast}
                       onRefresh={loadData}
