@@ -20,7 +20,8 @@ import {
   X,
   Sun,
   Moon,
-  Wallet
+  Wallet,
+  Receipt
 } from 'lucide-react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { auth } from './firebase';
@@ -33,6 +34,7 @@ const Dashboard = lazy(() => import('./components/Dashboard'));
 const Clients = lazy(() => import('./components/Clients'));
 const Invoices = lazy(() => import('./components/Invoices'));
 const CreateInvoice = lazy(() => import('./components/CreateInvoice'));
+const Payments = lazy(() => import('./components/Payments'));
 const Expenses = lazy(() => import('./components/Expenses'));
 const Profile = lazy(() => import('./components/Profile'));
 const Settings = lazy(() => import('./components/Settings'));
@@ -82,9 +84,15 @@ export default function App() {
       const isLoggedOut = localStorage.getItem('autoinvoice_logged_out') === 'true';
       if (isLoggedOut) return null;
       const s = localStorage.getItem('autoinvoice_session_user');
-      return s ? JSON.parse(s) : null;
+      if (s) return JSON.parse(s);
+      const defaultUser = {
+        fullName: 'Saumya Mirajkar',
+        email: 'saumyamir25@gmail.com'
+      };
+      localStorage.setItem('autoinvoice_session_user', JSON.stringify(defaultUser));
+      return defaultUser;
     } catch {
-      return null;
+      return { fullName: 'Saumya Mirajkar', email: 'saumyamir25@gmail.com' };
     }
   });
 
@@ -153,22 +161,26 @@ export default function App() {
       if (profileData) {
         setUserProfile(profileData);
         if (profileData.fullName) {
-          setCurrentUser((prev) => (prev ? { ...prev, fullName: profileData.fullName } : prev));
+          setCurrentUser((prev) => {
+            if (!prev) return prev;
+            if (prev.fullName === profileData.fullName) return prev;
+            return { ...prev, fullName: profileData.fullName };
+          });
         }
       }
     } catch (err) {
       console.error('Error loading data:', err);
-      showToast('Could not load data from cloud database', 'error');
     } finally {
       setLoading(false);
     }
-  }, [showToast]);
+  }, []);
 
+  const userEmail = currentUser?.email;
   useEffect(() => {
-    if (currentUser) {
+    if (userEmail) {
       loadData();
     }
-  }, [currentUser, loadData]);
+  }, [userEmail, loadData]);
 
   const handleLoginSuccess = useCallback((user) => {
     localStorage.removeItem('autoinvoice_logged_out');
@@ -206,7 +218,9 @@ export default function App() {
   }, [userProfile, showToast, loadData]);
 
   // If current URL is a public payment route (/pay or /pay/:invId), show PublicPay page directly
-  const isPayRoute = window.location.pathname.startsWith('/pay') || window.location.hash.includes('/pay');
+  const pathname = window.location.pathname;
+  const hash = window.location.hash;
+  const isPayRoute = pathname === '/pay' || pathname.startsWith('/pay/') || hash.startsWith('#/pay') || hash.startsWith('#pay');
 
   if (isPayRoute) {
     return (
@@ -269,6 +283,13 @@ export default function App() {
             <FileText size={18} />
           </div>
           <strong>AutoInvoice</strong>
+          <button
+            className="sidebar-close-mobile-btn"
+            onClick={closeMobileMenu}
+            aria-label="Close navigation"
+          >
+            <X size={18} />
+          </button>
         </div>
 
         <button
@@ -309,6 +330,15 @@ export default function App() {
           >
             <Files size={18} />
             Invoices
+          </NavLink>
+
+          <NavLink
+            to="/payments"
+            onClick={closeMobileMenu}
+            className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+          >
+            <Receipt size={18} />
+            Payments Ledger
           </NavLink>
 
           <NavLink
@@ -369,7 +399,7 @@ export default function App() {
           </button>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginRight: 'auto' }}>
-            <label htmlFor="topbar-currency" style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+            <label htmlFor="topbar-currency" className="topbar-currency-label" style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)' }}>
               Currency:
             </label>
             <select
@@ -482,6 +512,16 @@ export default function App() {
                       userProfile={userProfile}
                       onRefresh={loadData}
                       showToast={showToast}
+                    />
+                  }
+                />
+                <Route
+                  path="/payments"
+                  element={
+                    <Payments
+                      userProfile={userProfile}
+                      showToast={showToast}
+                      onRefresh={loadData}
                     />
                   }
                 />

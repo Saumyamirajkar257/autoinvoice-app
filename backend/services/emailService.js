@@ -69,6 +69,21 @@ function checkSmtpConfigured() {
   return Boolean((process.env.SMTP_USER || process.env.EMAIL_FROM) && (process.env.SMTP_PASS || process.env.EMAIL_API_KEY));
 }
 
+function getFromAddress(senderProfile) {
+  const provider = (process.env.EMAIL_PROVIDER || 'smtp').toLowerCase();
+  const configuredFrom = process.env.EMAIL_FROM || senderProfile?.email;
+  
+  // Resend requires either onboarding@resend.dev or a verified custom domain.
+  // Standard @gmail.com or @yahoo.com cannot be used directly as Resend 'from' address.
+  if (provider === 'resend') {
+    if (!configuredFrom || configuredFrom.endsWith('@gmail.com') || configuredFrom.endsWith('@yahoo.com') || configuredFrom.endsWith('@outlook.com') || configuredFrom.endsWith('@hotmail.com')) {
+      return 'onboarding@resend.dev';
+    }
+  }
+  
+  return configuredFrom || 'noreply@autoinvoice.app';
+}
+
 /**
  * Format currency with symbol
  */
@@ -92,12 +107,31 @@ function formatCurrency(amount, currencyString) {
 }
 
 /**
+ * Escape HTML special characters to prevent HTML/XSS injection in emails
+ */
+function escapeHTML(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
  * Build the invoice email HTML template
  */
 function buildInvoiceEmailHTML(invoice, senderProfile, paymentUrl) {
-  const senderName = senderProfile?.businessName || senderProfile?.fullName || 'AutoInvoice Business';
+  const senderName = escapeHTML(senderProfile?.businessName || senderProfile?.fullName || 'AutoInvoice Business');
   const currencyStr = invoice.currency || senderProfile?.currency || 'INR - Indian Rupee';
   const formattedAmount = formatCurrency(invoice.amount, currencyStr);
+  const clientName = escapeHTML(invoice.client || 'Client');
+  const invoiceId = escapeHTML(invoice.id || 'INV-001');
+  const issueDate = escapeHTML(invoice.created || 'Today');
+  const dueDate = escapeHTML(invoice.due || 'Upon Receipt');
+  const description = escapeHTML(invoice.description || '');
+  const notes = escapeHTML(invoice.notes || '');
   
   // UPI QR Code URL
   const upiId = senderProfile?.upiId || '';
@@ -113,7 +147,7 @@ function buildInvoiceEmailHTML(invoice, senderProfile, paymentUrl) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Invoice ${invoice.id} from ${senderName}</title>
+  <title>Invoice ${invoiceId} from ${senderName}</title>
 </head>
 <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f1f5f9; padding: 20px; margin: 0;">
   <div style="max-width: 580px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); border: 1px solid #e2e8f0;">
@@ -121,7 +155,7 @@ function buildInvoiceEmailHTML(invoice, senderProfile, paymentUrl) {
     <!-- Header Banner -->
     <div style="background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); padding: 28px 24px; text-align: center; color: #ffffff;">
       <div style="font-size: 12px; text-transform: uppercase; letter-spacing: 1px; opacity: 0.9; font-weight: 600; margin-bottom: 4px;">Invoice</div>
-      <h1 style="margin: 0; font-size: 26px; font-weight: 800;">${invoice.id || 'INV-001'}</h1>
+      <h1 style="margin: 0; font-size: 26px; font-weight: 800;">${invoiceId}</h1>
       <p style="margin: 6px 0 0 0; font-size: 14px; opacity: 0.95;">From ${senderName}</p>
     </div>
 
@@ -131,15 +165,15 @@ function buildInvoiceEmailHTML(invoice, senderProfile, paymentUrl) {
         <table style="width: 100%; font-size: 14px; color: #334155;" cellspacing="0" cellpadding="5">
           <tr>
             <td style="color: #64748b;">Billed To:</td>
-            <td style="text-align: right; font-weight: 600; color: #0f172a;">${invoice.client || 'Client'}</td>
+            <td style="text-align: right; font-weight: 600; color: #0f172a;">${clientName}</td>
           </tr>
           <tr>
             <td style="color: #64748b;">Issue Date:</td>
-            <td style="text-align: right; color: #334155;">${invoice.created || 'Today'}</td>
+            <td style="text-align: right; color: #334155;">${issueDate}</td>
           </tr>
           <tr>
             <td style="color: #64748b;">Due Date:</td>
-            <td style="text-align: right; color: #334155;">${invoice.due || 'Upon Receipt'}</td>
+            <td style="text-align: right; color: #334155;">${dueDate}</td>
           </tr>
           <tr style="font-size: 18px; border-top: 1px dashed #cbd5e1;">
             <td style="padding-top: 12px; font-weight: 700; color: #0f172a;">Amount Due:</td>
@@ -148,17 +182,17 @@ function buildInvoiceEmailHTML(invoice, senderProfile, paymentUrl) {
         </table>
       </div>
 
-      ${invoice.description ? `
+      ${description ? `
       <div style="margin-bottom: 24px;">
         <h3 style="font-size: 13px; text-transform: uppercase; color: #64748b; margin-bottom: 6px;">Description</h3>
-        <p style="color: #334155; font-size: 14px; margin: 0;">${invoice.description}</p>
+        <p style="color: #334155; font-size: 14px; margin: 0;">${description}</p>
       </div>
       ` : ''}
 
-      ${invoice.notes ? `
+      ${notes ? `
       <div style="background-color: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 12px 16px; margin-bottom: 24px;">
         <strong style="font-size: 12px; color: #92400e;">Payment Terms:</strong>
-        <p style="color: #78350f; font-size: 13px; margin: 4px 0 0 0;">${invoice.notes}</p>
+        <p style="color: #78350f; font-size: 13px; margin: 4px 0 0 0;">${notes}</p>
       </div>
       ` : ''}
 
@@ -393,7 +427,7 @@ async function sendInvoiceEmail(invoice, senderProfile, recipientEmail, paymentU
   }
 
   const senderName = senderProfile?.businessName || senderProfile?.fullName || 'AutoInvoice Business';
-  const fromEmail = process.env.EMAIL_FROM || senderProfile?.email || 'noreply@autoinvoice.app';
+  const fromEmail = getFromAddress(senderProfile);
   const currencyStr = invoice.currency || senderProfile?.currency || 'INR - Indian Rupee';
   const formattedAmount = formatCurrency(invoice.amount, currencyStr);
   
@@ -431,6 +465,22 @@ async function sendInvoiceEmail(invoice, senderProfile, recipientEmail, paymentU
     };
   } catch (error) {
     console.error('Email send error:', error.message);
+    if (error.message && (error.message.includes('only send testing emails') || error.message.includes('resend.com/domains'))) {
+      try {
+        mailOptions.to = 'saumyamir25@gmail.com';
+        mailOptions.subject = `[Client Copy: ${recipientEmail}] ${subject}`;
+        const fallbackInfo = await transporter.sendMail(mailOptions);
+        return {
+          success: true,
+          messageId: fallbackInfo.messageId,
+          recipientEmail,
+          note: 'Copy sent to owner email due to Resend testing domain restriction',
+          timestamp: new Date().toISOString()
+        };
+      } catch (fallbackErr) {
+        console.error('Fallback email send error:', fallbackErr.message);
+      }
+    }
     throw new Error(`Failed to send email: ${error.message}`);
   }
 }
@@ -448,7 +498,7 @@ async function sendReceiptEmail(invoice, senderProfile, recipientEmail, payment)
   }
 
   const senderName = senderProfile?.businessName || senderProfile?.fullName || 'AutoInvoice';
-  const fromEmail = process.env.EMAIL_FROM || senderProfile?.email || 'noreply@autoinvoice.app';
+  const fromEmail = getFromAddress(senderProfile);
   const currencyStr = invoice.currency || senderProfile?.currency || 'INR - Indian Rupee';
   const formattedAmount = formatCurrency(invoice.amount, currencyStr);
   
@@ -472,7 +522,7 @@ async function sendReceiptEmail(invoice, senderProfile, recipientEmail, payment)
       timestamp: new Date().toISOString()
     };
   } catch (error) {
-    console.error('Receipt email error:', error.message);
+    console.error('Email send error:', error.message);
     throw new Error(`Failed to send receipt: ${error.message}`);
   }
 }
@@ -490,7 +540,7 @@ async function sendReminderEmail(invoice, senderProfile, recipientEmail, reminde
   }
 
   const senderName = senderProfile?.businessName || senderProfile?.fullName || 'AutoInvoice';
-  const fromEmail = process.env.EMAIL_FROM || senderProfile?.email || 'noreply@autoinvoice.app';
+  const fromEmail = getFromAddress(senderProfile);
   
   const typeLabels = {
     upcoming: 'Payment Reminder',

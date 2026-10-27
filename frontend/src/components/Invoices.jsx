@@ -18,7 +18,9 @@ import {
   X,
   Send,
   RefreshCw,
-  Check
+  Check,
+  Copy,
+  CreditCard
 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { api } from '../api';
@@ -93,15 +95,70 @@ export default function Invoices({ invoices = [], onRefresh, showToast, userProf
     }
   };
 
+  const handleDuplicateInvoice = async (invoice) => {
+    try {
+      const nextId = `INV-${Date.now().toString().slice(-4)}`;
+      const duplicated = {
+        ...invoice,
+        id: nextId,
+        status: 'draft',
+        amountPaid: 0,
+        balanceDue: invoice.amount,
+        payments: [],
+        payment: null,
+        created: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+        emailStatus: 'not_sent'
+      };
+      await api.addInvoice(duplicated);
+      showToast(`Invoice cloned as ${nextId} (Draft)`, 'success');
+      if (onRefresh) onRefresh();
+    } catch (err) {
+      showToast('Failed to duplicate invoice', 'error');
+    }
+  };
+
   const [sendingInvoiceId, setSendingInvoiceId] = useState(null);
 
-  const handleDownloadPDF = (invoice, templateOverride) => {
+  const handleDownloadPDF = async (invoice, templateOverride) => {
     const clientObj = clients.find(c => c.company === invoice.client);
     const lang = invoice.language || userProfile?.language || 'English';
     const curr = invoice.currency || userProfile?.currency || 'INR - Indian Rupee';
     const tmpl = templateOverride || invoice.template || userProfile?.defaultTemplate || 'modern';
+    
+    // 1. Download PDF to device
     generateInvoicePDF(invoice, userProfile, clientObj, lang, curr, tmpl);
-    showToast(`Downloaded ${invoice.id}_${tmpl}.pdf`, 'info');
+
+    // 2. Automatically send email directly to client
+    const recipientEmail = (invoice.clientEmail || clientObj?.email || '').trim();
+    if (recipientEmail) {
+      showToast(`Downloaded ${invoice.id}.pdf & sending email to ${recipientEmail}...`, 'info');
+      try {
+        let pdfBase64 = null;
+        try {
+          pdfBase64 = getInvoicePDFBase64(invoice, userProfile, clientObj, lang, curr, tmpl);
+        } catch (e) {}
+
+        await api.sendInvoiceEmail(invoice.id, {
+          recipientEmail,
+          pdfBase64
+        });
+
+        setSelectedDetailInvoice(prev => prev && prev.id === invoice.id ? {
+          ...prev,
+          emailStatus: 'sent',
+          emailSentTo: recipientEmail,
+          emailSentAt: new Date().toISOString()
+        } : prev);
+
+        showToast(`Invoice ${invoice.id} downloaded & emailed directly to ${recipientEmail}!`, 'success');
+        if (onRefresh) onRefresh();
+      } catch (err) {
+        console.error('Download & send email error:', err);
+        showToast(`Downloaded ${invoice.id}.pdf (Email warning: ${err.message || 'Check client email'})`, 'info');
+      }
+    } else {
+      showToast(`Downloaded ${invoice.id}_${tmpl}.pdf. (Tip: Add client email to send directly)`, 'info');
+    }
   };
 
   const handlePreviewPDF = (invoice, templateOverride) => {
@@ -157,7 +214,8 @@ export default function Invoices({ invoices = [], onRefresh, showToast, userProf
       if (onRefresh) onRefresh();
     } catch (err) {
       console.error('Invoice send error:', err);
-      showToast('Unable to send the invoice. Please check the email address or try again.', 'error');
+      const errorMsg = err?.message || (typeof err === 'string' ? err : 'Unable to send the invoice. Please check the email address or try again.');
+      showToast(errorMsg, 'error');
       setSelectedDetailInvoice(prev => prev && prev.id === invoice.id ? {
         ...prev,
         emailStatus: 'failed'
@@ -247,7 +305,7 @@ export default function Invoices({ invoices = [], onRefresh, showToast, userProf
 
       {/* Filter Tabs */}
       <div className="filter-tabs">
-        {['all', 'draft', 'sent', 'pending_verification', 'paid', 'overdue'].map((tab) => (
+        {['all', 'draft', 'sent', 'partially_paid', 'pending_verification', 'paid', 'overdue'].map((tab) => (
           <button
             key={tab}
             className={`tab-btn ${activeTab === tab ? 'active' : ''}`}
@@ -255,10 +313,11 @@ export default function Invoices({ invoices = [], onRefresh, showToast, userProf
               setActiveTab(tab);
               setCurrentPage(1);
             }}
-            style={{ textTransform: 'capitalize' }}
           >
-            {tab === 'pending_verification' ? 'Pending' : tab}
-            {tab === 'all' && ` (${invoices.length})`}
+            {tab === 'partially_paid' ? 'Partially Paid' : (tab === 'pending_verification' ? 'Pending' : tab.charAt(0).toUpperCase() + tab.slice(1))}
+            {tab === 'all'
+              ? ` (${invoices.length})`
+              : ` (${invoices.filter(i => (i.status || 'sent').toLowerCase() === tab).length})`}
           </button>
         ))}
       </div>
@@ -346,8 +405,22 @@ export default function Invoices({ invoices = [], onRefresh, showToast, userProf
                       </td>
                       <td>
                         <div className="table-amount">{formatMoney(inv.amount, inv.currency)}</div>
-                        {inv.taxAmount > 0 && (
-                          <span className="table-subtext">+{formatMoney(inv.taxAmount, inv.currency)} tax</span>
+                        {(inv.status === 'partially_paid' || (inv.amountPaid > 0 && inv.balanceDue > 0)) ? (
+                          <div style={{ marginTop: '4px', minWidth: '110px' }}>
+                            <div style={{ fontSize: '11px', color: '#16a34a', fontWeight: 600 }}>
+                              Paid: {formatMoney(inv.amountPaid, inv.currency)}
+                            </div>
+                            <div style={{ fontSize: '11px', color: '#dc2626', fontWeight: 600 }}>
+                              Due: {formatMoney(inv.balanceDue, inv.currency)}
+                            </div>
+                            <div style={{ width: '100%', height: '4px', background: 'var(--border-color)', borderRadius: '2px', overflow: 'hidden', marginTop: '3px' }}>
+                              <div style={{ width: `${Math.min(100, Math.round(((inv.amountPaid || 0) / (inv.amount || 1)) * 100))}%`, height: '100%', background: '#16a34a' }} />
+                            </div>
+                          </div>
+                        ) : (
+                          inv.taxAmount > 0 && (
+                            <span className="table-subtext">+{formatMoney(inv.taxAmount, inv.currency)} tax</span>
+                          )
                         )}
                       </td>
                       <td>
@@ -398,40 +471,42 @@ export default function Invoices({ invoices = [], onRefresh, showToast, userProf
                           </button>
                           <button
                             className="icon-action-btn"
-                            title="View Activity & Details"
+                            title="View Activity & Financial Details"
                             onClick={() => setSelectedDetailInvoice(inv)}
                           >
                             <Eye size={15} color="#64748b" />
                           </button>
                           <button
                             className="icon-action-btn"
-                            title="Payment Gateway & QR Code"
+                            title="Record Payment / QR Gateway"
                             onClick={() => setPaymentModalInvoice(inv)}
+                            style={{ color: '#16a34a' }}
                           >
-                            <QrCode size={15} color="#16a34a" />
+                            <CreditCard size={15} />
                           </button>
                           <button
                             className="icon-action-btn"
-                            title="Download PDF"
+                            title="Download Tax Invoice PDF"
                             onClick={() => handleDownloadPDF(inv)}
                           >
                             <Download size={15} />
                           </button>
-                          {inv.status === 'paid' && (
+                          {(inv.status === 'paid' || inv.status === 'partially_paid' || (inv.amountPaid > 0) || inv.payment) && (
                             <button
                               className="icon-action-btn"
-                              title="Download Payment Receipt"
+                              title="Download Official Payment Receipt"
                               onClick={() => handleDownloadReceipt(inv)}
+                              style={{ color: '#16a34a' }}
                             >
-                              <Receipt size={15} color="#16a34a" />
+                              <Receipt size={15} />
                             </button>
                           )}
                           <button
                             className="icon-action-btn"
-                            title="Compose Custom Email Options"
-                            onClick={() => handleEmailInvoice(inv)}
+                            title="Duplicate / Clone Invoice"
+                            onClick={() => handleDuplicateInvoice(inv)}
                           >
-                            <Mail size={15} color="#64748b" />
+                            <Copy size={15} color="#64748b" />
                           </button>
                           <select
                             className="status-select"
@@ -440,6 +515,7 @@ export default function Invoices({ invoices = [], onRefresh, showToast, userProf
                           >
                             <option value="draft">Draft</option>
                             <option value="sent">Sent</option>
+                            <option value="partially_paid">Partially Paid</option>
                             <option value="paid">Paid</option>
                             <option value="overdue">Overdue</option>
                           </select>
@@ -524,6 +600,7 @@ export default function Invoices({ invoices = [], onRefresh, showToast, userProf
         <PaymentModal
           invoice={paymentModalInvoice}
           userProfile={userProfile}
+          clients={clients}
           onClose={() => setPaymentModalInvoice(null)}
           onRefresh={onRefresh}
           showToast={showToast}
@@ -580,8 +657,59 @@ export default function Invoices({ invoices = [], onRefresh, showToast, userProf
                 </div>
               </div>
 
-              {/* Payment Details if available */}
-              {selectedDetailInvoice.payment && (
+              {/* Payment History & Partial Payments */}
+              {(Array.isArray(selectedDetailInvoice.payments) && selectedDetailInvoice.payments.length > 0) ? (
+                <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px', padding: '14px 16px', background: 'var(--bg-card)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                    <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>
+                      Payment History ({selectedDetailInvoice.payments.length} Transactions)
+                    </span>
+                    <button
+                      type="button"
+                      className="btn-primary btn-sm"
+                      style={{ padding: '3px 8px', fontSize: '11px' }}
+                      onClick={() => {
+                        const target = selectedDetailInvoice;
+                        setSelectedDetailInvoice(null);
+                        setPaymentModalInvoice(target);
+                      }}
+                    >
+                      <Plus size={12} /> Record Another Payment
+                    </button>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {selectedDetailInvoice.payments.map((p, idx) => (
+                      <div
+                        key={p.id || idx}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          background: 'var(--bg-card-subtle)',
+                          padding: '8px 12px',
+                          borderRadius: '6px',
+                          fontSize: '12px'
+                        }}
+                      >
+                        <div>
+                          <strong>{formatMoney(p.amount, selectedDetailInvoice.currency)}</strong>
+                          <span style={{ color: 'var(--text-muted)', marginLeft: '8px' }}>
+                            Ref: {p.transactionId} • {(p.method || 'upi').toUpperCase()} • {p.paidAt ? new Date(p.paidAt).toLocaleDateString() : 'N/A'}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          className="btn-secondary btn-sm"
+                          style={{ padding: '2px 8px', fontSize: '11px' }}
+                          onClick={() => generateReceiptPDF(selectedDetailInvoice, userProfile, clients.find(c => c.company === selectedDetailInvoice.client), p)}
+                        >
+                          <Receipt size={12} color="#16a34a" /> Receipt
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : selectedDetailInvoice.payment ? (
                 <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px', padding: '14px 16px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
                     <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>Payment Record</span>
@@ -602,7 +730,7 @@ export default function Invoices({ invoices = [], onRefresh, showToast, userProf
                     </div>
                   </div>
                 </div>
-              )}
+              ) : null}
 
               {/* Email Delivery Status Card */}
               <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px', padding: '14px 16px', background: 'var(--bg-card)' }}>
@@ -713,7 +841,7 @@ export default function Invoices({ invoices = [], onRefresh, showToast, userProf
                     </>
                   )}
                 </button>
-                {selectedDetailInvoice.status === 'paid' && (
+                {(selectedDetailInvoice.status === 'paid' || selectedDetailInvoice.status === 'partially_paid' || selectedDetailInvoice.amountPaid > 0) && (
                   <>
                     <button
                       className="btn-secondary btn-sm"

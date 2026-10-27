@@ -17,6 +17,7 @@ import {
   buildReminderEmailData,
   buildReceiptEmailData
 } from './utils/emailService';
+import { formatCurrency } from './utils/currency';
 
 const API_BASE = '/api';
 
@@ -118,6 +119,10 @@ async function getAuthToken() {
   } catch (e) {
     console.warn('Failed to get auth token:', e.message);
   }
+  try {
+    const storedToken = localStorage.getItem('autoinvoice_token');
+    if (storedToken) return storedToken;
+  } catch (e) {}
   return null;
 }
 
@@ -199,12 +204,30 @@ function handleFallback(endpoint, options = {}) {
     const invoices = getLocal('autoinvoice_invoices', DEFAULT_INVOICES);
     const clients = getLocal('autoinvoice_clients', DEFAULT_CLIENTS);
 
-    const totalRevenue = invoices.filter(i => i.status === 'paid').reduce((sum, i) => sum + Number(i.amount || 0), 0);
-    const pendingAmount = invoices.filter(i => i.status === 'sent').reduce((sum, i) => sum + Number(i.amount || 0), 0);
+    const totalRevenue = invoices.reduce((sum, i) => {
+      if (i.status === 'paid') return sum + Number(i.amount || 0);
+      if (i.amountPaid) return sum + Number(i.amountPaid || 0);
+      return sum;
+    }, 0);
+    const pendingAmount = invoices.reduce((sum, i) => {
+      if (i.status === 'sent' || i.status === 'pending_verification') {
+        const balance = i.balanceDue !== undefined ? Number(i.balanceDue) : Number(i.amount || 0);
+        return sum + balance;
+      }
+      if (i.status === 'partially_paid') {
+        return sum + Number(i.balanceDue || 0);
+      }
+      if (i.status === 'overdue') {
+        const balance = i.balanceDue !== undefined ? Number(i.balanceDue) : Number(i.amount || 0);
+        return sum + balance;
+      }
+      return sum;
+    }, 0);
     const paidCount = invoices.filter(i => i.status === 'paid').length;
+    const partialCount = invoices.filter(i => i.status === 'partially_paid').length;
     const draftCount = invoices.filter(i => i.status === 'draft').length;
     const overdueCount = invoices.filter(i => i.status === 'overdue').length;
-    const avgClientRevenue = clients.length > 0 ? (invoices.reduce((sum, i) => sum + Number(i.amount || 0), 0) / clients.length).toFixed(2) : '0.00';
+    const avgClientRevenue = clients.length > 0 ? (totalRevenue / clients.length).toFixed(2) : '0.00';
 
     return {
       totalInvoices: invoices.length,
@@ -213,6 +236,7 @@ function handleFallback(endpoint, options = {}) {
       totalClients: clients.length,
       avgClientRevenue: Number(avgClientRevenue),
       paidCount,
+      partialCount,
       draftCount,
       overdueCount,
       recentInvoices: invoices.slice(0, 5)
@@ -333,6 +357,107 @@ function handleFallback(endpoint, options = {}) {
     const parts = endpoint.split('/');
     const invId = parts[2];
     let invoices = getLocal('autoinvoice_invoices', DEFAULT_INVOICES);
+
+    if (parts[3] === 'record-payment' && method === 'POST') {
+      const inv = invoices.find(i => String(i.id).toLowerCase() === String(invId).toLowerCase());
+      if (!inv) return { error: 'Invoice not found' };
+
+      const totalInvoiceAmt = Number(inv.amount || 0);
+      const existingPayments = Array.isArray(inv.payments) ? inv.payments : (inv.payment && inv.payment.status === 'verified' ? [inv.payment] : []);
+      const cleanTxId = String(body.transactionId || '').trim();
+
+      // Check duplicate
+      const isDuplicate = existingPayments.some(p => p.transactionId && p.transactionId.toLowerCase() === cleanTxId.toLowerCase());
+      if (isDuplicate && cleanTxId) {
+        return { error: 'A payment with this transaction reference has already been recorded.' };
+      }
+
+      const previousPaid = existingPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+      const payAmt = Math.min(Number(body.amount) || (totalInvoiceAmt - previousPaid), Math.max(0, totalInvoiceAmt - previousPaid));
+      const totalPaidToDate = Number((previousPaid + payAmt).toFixed(2));
+      const remainingBalance = Math.max(0, Number((totalInvoiceAmt - totalPaidToDate).toFixed(2)));
+      const receiptNumber = `REC-${(inv.id || invId).replace(/^INV-?/i, '')}-${existingPayments.length + 1}`;
+
+      const newPayment = {
+        id: `pay_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        receiptNumber,
+        status: 'verified',
+        transactionId: cleanTxId || 'DIRECT_TRANSFER',
+        method: body.method || 'upi',
+        amount: payAmt,
+        previousPaid,
+        totalPaidToDate,
+        remainingBalance,
+        paidAt: new Date().toISOString(),
+        verifiedAt: new Date().toISOString(),
+        verifiedBy: 'manual',
+        notes: body.notes || ''
+      };
+
+      const updatedPayments = [...existingPayments, newPayment];
+      const newStatus = remainingBalance <= 0 ? 'paid' : (totalPaidToDate > 0 ? 'partially_paid' : (inv.status || 'sent'));
+
+      const activity = inv.activity || [];
+      activity.push({
+        event: 'payment_recorded',
+        timestamp: new Date().toISOString(),
+        actor: 'owner',
+        details: { transactionId: cleanTxId, amount: payAmt, remainingBalance, receiptNumber }
+      });
+
+      invoices = invoices.map(i => {
+        if (String(i.id).toLowerCase() === String(invId).toLowerCase()) {
+          return {
+            ...i,
+            payments: updatedPayments,
+            payment: newPayment,
+            amountPaid: totalPaidToDate,
+            balanceDue: remainingBalance,
+            status: newStatus,
+            activity,
+            paidAt: newPayment.paidAt
+          };
+        }
+        return i;
+      });
+      setLocal('autoinvoice_invoices', invoices);
+
+      return {
+        success: true,
+        message: remainingBalance <= 0 ? 'Payment received in full. Invoice marked as paid.' : `Partial payment of ${payAmt} recorded. Remaining: ${remainingBalance}`,
+        payment: newPayment,
+        payments: updatedPayments,
+        status: newStatus,
+        balanceDue: remainingBalance
+      };
+    }
+
+    if (parts[3] === 'verify-payment' && method === 'POST') {
+      invoices = invoices.map(i => {
+        if (String(i.id).toLowerCase() === String(invId).toLowerCase()) {
+          const updatedP = {
+            ...(i.payment || {}),
+            status: 'verified',
+            verifiedAt: new Date().toISOString()
+          };
+          const totalAmt = Number(i.amount || 0);
+          const payAmt = Number(updatedP.amount || totalAmt);
+          const remainingBalance = Math.max(0, totalAmt - payAmt);
+          const newStatus = remainingBalance <= 0 ? 'paid' : 'partially_paid';
+
+          return {
+            ...i,
+            status: newStatus,
+            payment: updatedP,
+            amountPaid: payAmt,
+            balanceDue: remainingBalance
+          };
+        }
+        return i;
+      });
+      setLocal('autoinvoice_invoices', invoices);
+      return { success: true, message: 'Payment verified' };
+    }
 
     if (parts[3] === 'status' && method === 'PUT') {
       invoices = invoices.map(i => i.id === invId ? { ...i, status: body.status } : i);
@@ -765,39 +890,27 @@ export const api = {
     URL.revokeObjectURL(url);
   },
 
-  // Auth (Legacy API routes)
-  login: (credentials) => apiRequest('/auth/login', { method: 'POST', body: credentials }),
-  signup: (userData) => apiRequest('/auth/signup', { method: 'POST', body: userData }),
-
-  // --- Backend & Cloud Transactional Email Delivery (FormSubmit Direct) ---
-  sendInvoiceEmail: async (invoiceId, options = {}) => {
-    const payload = {};
-    if (options.recipientEmail) payload.recipientEmail = options.recipientEmail;
-    if (options.pdfBase64) payload.pdfBase64 = options.pdfBase64;
-
-    try {
-      const res = await apiRequest(`/invoices/${encodeURIComponent(invoiceId)}/send`, {
-        method: 'POST',
-        body: payload
-      });
-      if (res && res.success) {
-        let invoices = getLocal('autoinvoice_invoices', DEFAULT_INVOICES);
-        invoices = invoices.map(i => String(i.id) === String(invoiceId) ? {
-          ...i,
-          emailStatus: 'sent',
-          emailSentTo: res.recipient || options.recipientEmail,
-          emailSentAt: res.sentAt || new Date().toISOString()
-        } : i);
-        setLocal('autoinvoice_invoices', invoices);
-        return res;
-      }
-      if (res && res.error) {
-        throw new Error(res.error);
-      }
-    } catch (e) {
-      console.warn('Backend send API notice, using direct FormSubmit cloud delivery:', e.message);
+  // Auth (REST API routes with token storage)
+  login: async (credentials) => {
+    const res = await apiRequest('/auth/login', { method: 'POST', body: credentials });
+    if (res?.token) {
+      try { localStorage.setItem('autoinvoice_token', res.token); } catch (e) {}
     }
+    return res;
+  },
+  signup: async (userData) => {
+    const res = await apiRequest('/auth/signup', { method: 'POST', body: userData });
+    if (res?.token) {
+      try { localStorage.setItem('autoinvoice_token', res.token); } catch (e) {}
+    }
+    return res;
+  },
+  logout: () => {
+    try { localStorage.removeItem('autoinvoice_token'); } catch (e) {}
+  },
 
+  // --- Cloud Transactional Email Delivery (FormSubmit Direct) ---
+  sendInvoiceEmail: async (invoiceId, options = {}) => {
     const toEmail = (options.recipientEmail || '').trim();
     if (!toEmail) {
       throw new Error('Recipient email address is required');
@@ -805,7 +918,7 @@ export const api = {
 
     const sentAt = new Date().toISOString();
 
-    // Retrieve invoice and sender details for rich FormSubmit payload
+    // Retrieve invoice and sender details for rich payload
     let invoice = null;
     try {
       const invoices = getLocal('autoinvoice_invoices', DEFAULT_INVOICES);
@@ -824,48 +937,31 @@ export const api = {
       : 'https://autoinvoice-frontend.saumyamir25.workers.dev';
     const paymentUrl = `${baseUrl}/#/pay/${encodeURIComponent(invoiceId)}`;
 
-    const emailSubject = options.subject || `Invoice ${invoiceId} from ${senderName} — ${formattedAmount}`;
-    const emailMessage = options.message || `Dear ${invoice?.client || clientObj?.company || 'Valued Client'},\n\nPlease find invoice ${invoiceId} from ${senderName}.\nAmount: ${formattedAmount}\nDue Date: ${invoice?.due || 'Upon Receipt'}\n\nYou can view and pay online here:\n${paymentUrl}\n\nThank you for your business!`;
+    const emailSubject = options.subject || `Invoice ${invoiceId} from ${senderName} (${formattedAmount})`;
+    const emailMessage = options.message || `Dear ${invoice?.client || clientObj?.company || 'Valued Client'},\n\nPlease find invoice ${invoiceId} from ${senderName}.\nAmount Due: ${formattedAmount}\nDue Date: ${invoice?.due || 'Upon Receipt'}\n\nView & Pay Online:\n${paymentUrl}\n\nThank you for your business!\n${senderName}`;
 
-    // Verified FormSubmit Service Endpoint
-    const primaryEndpoint = 'Saumyamir25@gmail.com';
-    const senderEmail = userProfile?.email || primaryEndpoint;
+    let deliverySuccess = false;
 
-    // Deliver real email via FormSubmit AJAX API
-    // 1. Post to verified endpoint with _cc, email, and _autoresponse to guarantee delivery to client
+    // 1. Primary: Secure backend transactional email dispatch (API keys remain hidden on server)
     try {
-      await fetch(`https://formsubmit.co/ajax/${encodeURIComponent(primaryEndpoint)}`, {
+      const backendRes = await apiRequest(`/invoices/${encodeURIComponent(invoiceId)}/send`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-          _subject: emailSubject,
-          _template: 'box',
-          _captcha: 'false',
-          _replyto: senderEmail,
-          _cc: toEmail,
-          _autoresponse: emailMessage,
-          email: toEmail,
-          "Recipient Email": toEmail,
-          "Invoice Number": invoiceId,
-          "Business Name": senderName,
-          "Client Name": invoice?.client || clientObj?.company || 'Valued Client',
-          "Amount Due": formattedAmount,
-          "Issue Date": invoice?.created || 'Today',
-          "Due Date": invoice?.due || 'Upon Receipt',
-          "View & Pay Invoice Online": paymentUrl,
-          "Payment Link": paymentUrl,
-          "Message": emailMessage
-        })
+        body: {
+          recipientEmail: toEmail,
+          pdfBase64: options.pdfBase64,
+          subject: emailSubject,
+          message: emailMessage
+        }
       });
-    } catch (fsErr) {
-      console.warn('FormSubmit primary dispatch note:', fsErr.message);
+      if (backendRes && (backendRes.success || backendRes.messageId)) {
+        deliverySuccess = true;
+      }
+    } catch (backendErr) {
+      console.warn('Backend email dispatch attempt:', backendErr);
     }
 
-    // 2. Also dispatch directly to client email endpoint if different
-    if (toEmail.toLowerCase() !== primaryEndpoint.toLowerCase()) {
+    // 2. Secondary fallback: Cloud transactional dispatch without exposing API keys
+    if (!deliverySuccess) {
       try {
         await fetch(`https://formsubmit.co/ajax/${encodeURIComponent(toEmail)}`, {
           method: 'POST',
@@ -877,7 +973,7 @@ export const api = {
             _subject: emailSubject,
             _template: 'box',
             _captcha: 'false',
-            _replyto: senderEmail,
+            _replyto: userProfile?.email || 'saumyamir25@gmail.com',
             "Invoice Number": invoiceId,
             "Business Name": senderName,
             "Client Name": invoice?.client || clientObj?.company || 'Valued Client',
@@ -889,11 +985,13 @@ export const api = {
             "Message": emailMessage
           })
         });
-      } catch (fsDirectErr) {
-        // Direct attempt fallback
+        deliverySuccess = true;
+      } catch (fsErr) {
+        console.warn('FormSubmit background dispatch note:', fsErr);
       }
     }
 
+    // Always update invoice status as Sent & log activity
     try {
       await api.updateInvoice(invoiceId, {
         emailStatus: 'sent',
@@ -920,16 +1018,6 @@ export const api = {
   },
 
   sendPaymentReminder: async (invoiceId, reminderType = 'upcoming') => {
-    try {
-      const res = await apiRequest(`/invoices/${encodeURIComponent(invoiceId)}/send-reminder`, {
-        method: 'POST',
-        body: { reminderType }
-      });
-      if (res && res.success) return res;
-    } catch (e) {
-      console.warn('Backend reminder API notice, dispatching via FormSubmit:', e.message);
-    }
-
     let invoice = null;
     try {
       const invoices = getLocal('autoinvoice_invoices', DEFAULT_INVOICES);
@@ -1221,29 +1309,63 @@ export const api = {
     const invoices = await api.getInvoices();
     const payments = [];
     invoices.forEach(inv => {
-      if (inv.payment && (inv.payment.status === 'verified' || inv.payment.status === 'pending_verification' || inv.status === 'paid')) {
+      if (Array.isArray(inv.payments) && inv.payments.length > 0) {
+        inv.payments.forEach(p => {
+          payments.push({
+            id: p.id || p.transactionId || `PAY-${inv.id}`,
+            receiptNumber: p.receiptNumber || `REC-${(inv.id || '').replace(/^INV-?/i, '')}`,
+            invoiceId: inv.id,
+            client: inv.client || 'Client',
+            clientEmail: inv.clientEmail || '',
+            amount: Number(p.amount) || Number(inv.amount) || 0,
+            previousPaid: Number(p.previousPaid) || 0,
+            totalPaidToDate: Number(p.totalPaidToDate) || (Number(p.amount) || Number(inv.amount)),
+            remainingBalance: p.remainingBalance !== undefined ? Number(p.remainingBalance) : 0,
+            currency: inv.currency || 'INR - Indian Rupee',
+            method: p.method || 'upi',
+            transactionId: p.transactionId || 'DIRECT_TRANSFER',
+            status: p.status || 'verified',
+            date: p.paidAt ? new Date(p.paidAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : (inv.due || inv.created || 'Recent'),
+            payerName: p.payerName || '',
+            payerEmail: p.payerEmail || '',
+            notes: p.notes || '',
+            paymentRecord: p,
+            invoice: inv
+          });
+        });
+      } else if (inv.payment && (inv.payment.status === 'verified' || inv.payment.status === 'pending_verification' || inv.status === 'paid')) {
         payments.push({
           id: inv.payment.transactionId || `PAY-${inv.id}`,
+          receiptNumber: inv.payment.receiptNumber || `REC-${(inv.id || '').replace(/^INV-?/i, '')}`,
           invoiceId: inv.id,
           client: inv.client || 'Client',
           clientEmail: inv.clientEmail || '',
-          amount: inv.amount || 0,
+          amount: Number(inv.payment.amount) || Number(inv.amount) || 0,
+          previousPaid: Number(inv.payment.previousPaid) || 0,
+          totalPaidToDate: Number(inv.payment.totalPaidToDate) || (Number(inv.payment.amount) || Number(inv.amount)),
+          remainingBalance: inv.payment.remainingBalance !== undefined ? Number(inv.payment.remainingBalance) : 0,
           currency: inv.currency || 'INR - Indian Rupee',
           method: inv.payment.method || 'upi',
           transactionId: inv.payment.transactionId || 'DIRECT_TRANSFER',
           status: inv.payment.status || (inv.status === 'paid' ? 'verified' : 'pending_verification'),
-          date: inv.payment.paidAt || inv.due || inv.created || 'Recent',
+          date: inv.payment.paidAt ? new Date(inv.payment.paidAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : (inv.due || inv.created || 'Recent'),
           payerName: inv.payment.payerName || '',
           payerEmail: inv.payment.payerEmail || '',
+          notes: inv.payment.notes || '',
+          paymentRecord: inv.payment,
           invoice: inv
         });
       } else if (inv.status === 'paid') {
         payments.push({
           id: `PAY-${inv.id}`,
+          receiptNumber: `REC-${(inv.id || '').replace(/^INV-?/i, '')}`,
           invoiceId: inv.id,
           client: inv.client || 'Client',
           clientEmail: inv.clientEmail || '',
-          amount: inv.amount || 0,
+          amount: Number(inv.amount) || 0,
+          previousPaid: 0,
+          totalPaidToDate: Number(inv.amount) || 0,
+          remainingBalance: 0,
           currency: inv.currency || 'INR - Indian Rupee',
           method: 'upi',
           transactionId: 'CONFIRMED_PAYMENT',

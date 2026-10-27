@@ -1,76 +1,160 @@
 import React, { useState } from 'react';
-import { X, CheckCircle, QrCode, Smartphone, CreditCard, ShieldCheck, ExternalLink, Clock, AlertTriangle } from 'lucide-react';
-import { formatCurrency } from '../utils/currency';
+import {
+  X,
+  CheckCircle,
+  QrCode,
+  Smartphone,
+  CreditCard,
+  ShieldCheck,
+  ExternalLink,
+  Clock,
+  AlertTriangle,
+  Receipt,
+  Download,
+  DollarSign,
+  FileText
+} from 'lucide-react';
+import confetti from 'canvas-confetti';
+import { formatCurrency, getCurrencySymbol } from '../utils/currency';
 import { api } from '../api';
+import { generateReceiptPDF } from './receiptGenerator';
 
-export default function PaymentModal({ invoice, userProfile, onClose, onRefresh, showToast }) {
+export default function PaymentModal({ invoice, userProfile, onClose, onRefresh, showToast, clients = [] }) {
   const [processing, setProcessing] = useState(false);
   const [completed, setCompleted] = useState(false);
-  const [txnId, setTxnId] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState('upi');
-  const [manualTxnId, setManualTxnId] = useState('');
-  const [activeTab, setActiveTab] = useState('qr'); // 'qr' | 'manual' | 'demo'
+  const [lastPaymentRecord, setLastPaymentRecord] = useState(null);
+  const [activeTab, setActiveTab] = useState('manual'); // 'manual' | 'qr' | 'history' | 'demo'
 
   if (!invoice) return null;
 
   const currencyStr = invoice.currency || userProfile?.currency || 'INR - Indian Rupee';
-  const formattedAmount = formatCurrency(invoice.amount, currencyStr);
+  const formatMoney = (val) => formatCurrency(val, currencyStr);
+  const currencySymbol = getCurrencySymbol(currencyStr);
 
-  // Direct scannable payment URL
+  const totalInvoiceAmt = Number(invoice.amount || 0);
+  const existingPayments = Array.isArray(invoice.payments)
+    ? invoice.payments
+    : (invoice.payment && invoice.payment.status === 'verified' ? [invoice.payment] : []);
+
+  const totalPaidSoFar = existingPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  const currentBalance = invoice.balanceDue !== undefined
+    ? Number(invoice.balanceDue)
+    : Math.max(0, Number((totalInvoiceAmt - totalPaidSoFar).toFixed(2)));
+
+  // Manual payment form fields
+  const [paymentAmount, setPaymentAmount] = useState(currentBalance > 0 ? currentBalance : totalInvoiceAmt);
+  const [paymentMethod, setPaymentMethod] = useState('upi');
+  const [manualTxnId, setManualTxnId] = useState('');
+  const [paymentNotes, setPaymentNotes] = useState('');
+
+  // Payment link and QR
   const paymentUrl = `${window.location.origin}/#/pay/${encodeURIComponent(invoice.id)}`;
   const senderName = userProfile?.businessName || userProfile?.fullName || 'AutoInvoice';
-  
+
   let qrCodeImgUrl = userProfile?.customQrUrl;
   if (!qrCodeImgUrl) {
     if (userProfile?.upiId) {
-      const upiString = `upi://pay?pa=${encodeURIComponent(userProfile.upiId)}&pn=${encodeURIComponent(senderName)}&am=${invoice.amount}&cu=INR&tn=Invoice%20${encodeURIComponent(invoice.id)}`;
+      const upiString = `upi://pay?pa=${encodeURIComponent(userProfile.upiId)}&pn=${encodeURIComponent(senderName)}&am=${currentBalance}&cu=INR&tn=Invoice%20${encodeURIComponent(invoice.id)}`;
       qrCodeImgUrl = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(upiString)}`;
     } else {
       qrCodeImgUrl = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(paymentUrl)}`;
     }
   }
 
-  // Record manual payment (business owner records a payment they've received)
+  const clientObj = clients.find(c => c.company === invoice.client);
+
+  // Record payment (partial or full)
   const handleRecordPayment = async () => {
     if (!manualTxnId.trim()) {
-      showToast('Please enter a transaction ID or reference number', 'error');
+      showToast('Please enter a transaction ID or reference / UTR number', 'error');
       return;
     }
+
+    const payAmt = Number(paymentAmount);
+    if (isNaN(payAmt) || payAmt <= 0) {
+      showToast('Please enter a valid positive payment amount', 'error');
+      return;
+    }
+
+    if (payAmt > currentBalance && currentBalance > 0) {
+      showToast(`Payment amount cannot exceed the remaining balance of ${formatMoney(currentBalance)}`, 'error');
+      return;
+    }
+
+    // Check duplicate transaction ID
+    const duplicate = existingPayments.some(
+      p => p.transactionId && p.transactionId.trim().toLowerCase() === manualTxnId.trim().toLowerCase()
+    );
+    if (duplicate) {
+      showToast('A payment with this exact transaction ID has already been recorded for this invoice.', 'error');
+      return;
+    }
+
     setProcessing(true);
     try {
-      await api.recordPayment(invoice.id, {
+      const res = await api.recordPayment(invoice.id, {
         transactionId: manualTxnId.trim(),
         method: paymentMethod,
-        amount: invoice.amount
+        amount: payAmt,
+        notes: paymentNotes.trim()
       });
-      
-      setTxnId(manualTxnId.trim());
+
+      const newRec = res?.payment || {
+        receiptNumber: `REC-${(invoice.id || '').replace(/^INV-?/i, '')}-${existingPayments.length + 1}`,
+        amount: payAmt,
+        previousPaid: totalPaidSoFar,
+        totalPaidToDate: totalPaidSoFar + payAmt,
+        remainingBalance: Math.max(0, currentBalance - payAmt),
+        transactionId: manualTxnId.trim(),
+        method: paymentMethod,
+        paidAt: new Date().toISOString()
+      };
+
+      setLastPaymentRecord(newRec);
       setCompleted(true);
-      showToast(`Payment of ${formattedAmount} recorded for ${invoice.id}!`, 'success');
+
+      try {
+        confetti({ particleCount: 70, spread: 60, origin: { y: 0.6 } });
+      } catch (e) {}
+
+      showToast(`Payment of ${formatMoney(payAmt)} recorded successfully!`, 'success');
       if (onRefresh) onRefresh();
     } catch (err) {
-      showToast('Unable to record payment. Please try again.', 'error');
+      showToast(err.message || 'Unable to record payment. Please try again.', 'error');
     } finally {
       setProcessing(false);
     }
   };
 
-  // Demo payment simulation (clearly labeled)
+  const handleDownloadReceipt = (paymentRec = null) => {
+    const targetPayment = paymentRec || lastPaymentRecord || (existingPayments.length > 0 ? existingPayments[existingPayments.length - 1] : invoice.payment);
+    generateReceiptPDF(invoice, userProfile, clientObj, targetPayment);
+    showToast(`Official Payment Receipt PDF downloaded!`, 'success');
+  };
+
+  // Demo payment simulation
   const handleDemoPayment = async () => {
     setProcessing(true);
     try {
-      const generatedTxn = `DEMO-${Math.floor(1000000000 + Math.random() * 900000000)}`;
-      
-      await api.recordPayment(invoice.id, {
+      const generatedTxn = `DEMO-UTR-${Math.floor(100000000000 + Math.random() * 900000000000)}`;
+      const res = await api.recordPayment(invoice.id, {
         transactionId: generatedTxn,
-        method: 'demo',
-        amount: invoice.amount,
-        notes: 'Demo/test payment — not a real transaction'
+        method: 'upi',
+        amount: currentBalance > 0 ? currentBalance : totalInvoiceAmt,
+        notes: 'Demo test payment settlement'
       });
 
-      setTxnId(generatedTxn);
+      const newRec = res?.payment || {
+        receiptNumber: `REC-${(invoice.id || '').replace(/^INV-?/i, '')}-${existingPayments.length + 1}`,
+        amount: currentBalance > 0 ? currentBalance : totalInvoiceAmt,
+        transactionId: generatedTxn,
+        method: 'upi',
+        paidAt: new Date().toISOString()
+      };
+
+      setLastPaymentRecord(newRec);
       setCompleted(true);
-      showToast(`Demo payment of ${formattedAmount} recorded! (Not a real payment)`, 'info');
+      showToast(`Demo payment simulated and recorded!`, 'info');
       if (onRefresh) onRefresh();
     } catch (err) {
       showToast('Error processing demo payment', 'error');
@@ -79,13 +163,12 @@ export default function PaymentModal({ invoice, userProfile, onClose, onRefresh,
     }
   };
 
-  // Verify pending payment
+  // Verify pending client payment
   const handleVerifyPayment = async () => {
     setProcessing(true);
     try {
       await api.verifyPayment(invoice.id);
       setCompleted(true);
-      setTxnId(invoice.payment?.transactionId || '');
       showToast(`Payment verified for ${invoice.id}!`, 'success');
       if (onRefresh) onRefresh();
     } catch (err) {
@@ -98,93 +181,164 @@ export default function PaymentModal({ invoice, userProfile, onClose, onRefresh,
   const isPending = invoice.status === 'pending_verification' || invoice.payment?.status === 'pending_verification';
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-card" style={{ maxWidth: '540px', padding: '0', overflow: 'hidden' }} onClick={(e) => e.stopPropagation()}>
-        
-        {/* Modal Header */}
-        <div className="modal-header" style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border-color)', padding: '16px 20px' }}>
+    <div className="custom-modal-backdrop" onClick={onClose}>
+      <div className="custom-modal-content" style={{ maxWidth: '580px' }} onClick={(e) => e.stopPropagation()}>
+        {/* Header */}
+        <div className="custom-modal-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <ShieldCheck size={20} color="var(--accent-primary)" />
+            <div style={{
+              width: '36px',
+              height: '36px',
+              borderRadius: '9px',
+              background: 'rgba(37, 99, 235, 0.1)',
+              color: 'var(--accent-primary)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}>
+              <ShieldCheck size={20} />
+            </div>
             <div>
-              <h3 style={{ margin: 0, fontSize: '16px' }}>Payment — {invoice.id}</h3>
-              <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{invoice.client}</span>
+              <h3 style={{ margin: 0, fontSize: '17px', fontWeight: 700 }}>
+                Record Payment — {invoice.id}
+              </h3>
+              <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                Client: {invoice.client}
+              </span>
             </div>
           </div>
-          <button className="modal-close" onClick={onClose}><X size={18} /></button>
+          <button className="icon-action-btn" onClick={onClose}>
+            <X size={18} />
+          </button>
         </div>
 
-        <div style={{ padding: '20px' }}>
-          {/* Success State */}
+        <div className="custom-modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+          {/* Completed State */}
           {completed ? (
-            <div style={{ textAlign: 'center', padding: '24px 0' }}>
-              <CheckCircle size={56} color="#16a34a" style={{ margin: '0 auto 16px' }} />
-              <h3 style={{ color: '#16a34a', marginBottom: '8px' }}>Payment Recorded!</h3>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginBottom: '12px' }}>
-                Invoice <strong>{invoice.id}</strong> marked as <strong>Paid</strong>
+            <div style={{ textAlign: 'center', padding: '20px 0' }}>
+              <CheckCircle size={56} color="#16a34a" style={{ margin: '0 auto 14px' }} />
+              <h3 style={{ color: '#16a34a', marginBottom: '6px', fontSize: '20px', fontWeight: 800 }}>
+                Payment Successfully Recorded!
+              </h3>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginBottom: '16px' }}>
+                Payment of <strong>{formatMoney(lastPaymentRecord?.amount || paymentAmount)}</strong> has been audited against invoice <strong>{invoice.id}</strong>.
               </p>
-              {txnId && (
-                <div style={{ background: 'var(--bg-card-subtle)', borderRadius: '8px', padding: '10px 16px', display: 'inline-block' }}>
-                  <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Transaction ID</span>
-                  <div style={{ fontWeight: 700, fontFamily: 'monospace' }}>{txnId}</div>
+
+              {lastPaymentRecord?.remainingBalance > 0 ? (
+                <div style={{
+                  background: 'var(--bg-card-subtle)',
+                  borderRadius: '10px',
+                  padding: '12px 18px',
+                  display: 'inline-block',
+                  marginBottom: '16px',
+                  border: '1px solid var(--border-color)'
+                }}>
+                  <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Remaining Balance Due: </span>
+                  <strong style={{ color: '#dc2626' }}>{formatMoney(lastPaymentRecord.remainingBalance)}</strong>
+                </div>
+              ) : (
+                <div style={{
+                  background: 'rgba(22, 163, 74, 0.1)',
+                  color: '#16a34a',
+                  borderRadius: '10px',
+                  padding: '8px 16px',
+                  display: 'inline-block',
+                  marginBottom: '16px',
+                  fontWeight: 700,
+                  fontSize: '13px'
+                }}>
+                  ✓ Invoice is Fully Settled & Closed
                 </div>
               )}
-              <div style={{ marginTop: '20px' }}>
-                <button className="btn-primary" onClick={onClose}>Done</button>
+
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={() => handleDownloadReceipt()}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}
+                >
+                  <Receipt size={16} />
+                  Download Official Receipt (PDF)
+                </button>
+                <button type="button" className="btn-secondary" onClick={onClose}>
+                  Close
+                </button>
               </div>
             </div>
           ) : isPending ? (
             /* Pending Verification State */
             <div style={{ textAlign: 'center', padding: '16px 0' }}>
               <Clock size={48} color="#d97706" style={{ margin: '0 auto 12px' }} />
-              <h3 style={{ color: '#d97706', marginBottom: '8px' }}>Payment Awaiting Verification</h3>
-              <p style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '8px' }}>
-                Client submitted a payment reference:
+              <h3 style={{ color: '#d97706', marginBottom: '8px', fontSize: '18px', fontWeight: 700 }}>
+                Client Payment Awaiting Verification
+              </h3>
+              <p style={{ fontSize: '13.5px', color: 'var(--text-secondary)', marginBottom: '12px' }}>
+                The client has submitted a transaction reference via the payment portal:
               </p>
               {invoice.payment?.transactionId && (
-                <div style={{ background: 'var(--bg-card-subtle)', borderRadius: '8px', padding: '10px 16px', display: 'inline-block', marginBottom: '16px' }}>
+                <div style={{ background: 'var(--bg-card-subtle)', borderRadius: '8px', padding: '10px 16px', display: 'inline-block', marginBottom: '14px' }}>
                   <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Reference: </span>
-                  <strong style={{ fontFamily: 'monospace' }}>{invoice.payment.transactionId}</strong>
+                  <strong style={{ fontFamily: 'monospace', fontSize: '14px' }}>{invoice.payment.transactionId}</strong>
                 </div>
               )}
-              <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '16px' }}>
-                Method: {(invoice.payment?.method || 'UPI').toUpperCase()} • 
-                Submitted: {invoice.payment?.paidAt ? new Date(invoice.payment.paidAt).toLocaleDateString() : 'N/A'}
-              </p>
-              <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '12px' }}>
                 <button className="btn-primary" onClick={handleVerifyPayment} disabled={processing}>
                   <ShieldCheck size={16} />
-                  {processing ? 'Verifying...' : 'Verify Payment'}
+                  {processing ? 'Verifying...' : 'Verify & Mark as Settled'}
                 </button>
                 <button className="btn-secondary" onClick={onClose}>Later</button>
               </div>
             </div>
           ) : (
-            /* Payment Actions */
+            /* Payment Recording & QR */
             <>
-              {/* Amount Card */}
-              <div style={{ textAlign: 'center', background: 'var(--accent-subtle)', borderRadius: '10px', padding: '16px', marginBottom: '20px', border: '1px solid var(--border-color)' }}>
-                <div style={{ fontSize: '12px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Invoice Amount</div>
-                <div style={{ fontSize: '28px', fontWeight: 800, color: 'var(--accent-primary)' }}>{formattedAmount}</div>
+              {/* Financial Balance Summary Card */}
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(3, 1fr)',
+                gap: '10px',
+                background: 'var(--bg-card-subtle)',
+                padding: '12px 14px',
+                borderRadius: '10px',
+                border: '1px solid var(--border-color)'
+              }}>
+                <div>
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Total Billed</span>
+                  <div style={{ fontSize: '16px', fontWeight: 800, color: 'var(--text-primary)' }}>{formatMoney(totalInvoiceAmt)}</div>
+                </div>
+                <div>
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Paid to Date</span>
+                  <div style={{ fontSize: '16px', fontWeight: 800, color: '#16a34a' }}>{formatMoney(totalPaidSoFar)}</div>
+                </div>
+                <div>
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Balance Due</span>
+                  <div style={{ fontSize: '16px', fontWeight: 800, color: currentBalance > 0 ? '#dc2626' : '#16a34a' }}>
+                    {formatMoney(currentBalance)}
+                  </div>
+                </div>
               </div>
 
               {/* Tab Selector */}
-              <div style={{ display: 'flex', gap: '4px', marginBottom: '16px', background: 'var(--bg-card-subtle)', borderRadius: '8px', padding: '4px' }}>
+              <div style={{ display: 'flex', gap: '4px', background: 'var(--bg-card-subtle)', borderRadius: '8px', padding: '4px' }}>
                 {[
-                  { id: 'qr', label: 'QR Code', icon: <QrCode size={14} /> },
-                  { id: 'manual', label: 'Record Payment', icon: <CreditCard size={14} /> },
+                  { id: 'manual', label: 'Record Transaction', icon: <CreditCard size={14} /> },
+                  { id: 'qr', label: 'UPI / Scan QR', icon: <QrCode size={14} /> },
+                  { id: 'history', label: `History (${existingPayments.length})`, icon: <Receipt size={14} /> },
                   { id: 'demo', label: 'Demo Mode', icon: <AlertTriangle size={14} /> }
                 ].map(tab => (
                   <button
+                    type="button"
                     key={tab.id}
                     onClick={() => setActiveTab(tab.id)}
                     style={{
                       flex: 1,
-                      padding: '8px 12px',
+                      padding: '7px 10px',
                       border: 'none',
                       borderRadius: '6px',
                       background: activeTab === tab.id ? 'var(--bg-card)' : 'transparent',
                       color: activeTab === tab.id ? 'var(--text-primary)' : 'var(--text-muted)',
-                      fontWeight: activeTab === tab.id ? 600 : 400,
+                      fontWeight: activeTab === tab.id ? 700 : 500,
                       fontSize: '12px',
                       cursor: 'pointer',
                       display: 'flex',
@@ -200,18 +354,99 @@ export default function PaymentModal({ invoice, userProfile, onClose, onRefresh,
                 ))}
               </div>
 
-              {/* QR Code Tab */}
+              {/* Tab 1: Manual Payment Recording (Partial or Full) */}
+              {activeTab === 'manual' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                  <div className="form-row-2">
+                    <div className="form-group" style={{ margin: 0 }}>
+                      <label className="form-label">
+                        Payment Amount ({currencySymbol}) <span className="req">*</span>
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        max={currentBalance > 0 ? currentBalance : totalInvoiceAmt}
+                        step="0.01"
+                        className="form-input"
+                        value={paymentAmount}
+                        onChange={(e) => setPaymentAmount(e.target.value)}
+                        required
+                      />
+                      <span className="form-help">
+                        {Number(paymentAmount) < currentBalance
+                          ? `Partial payment. Balance remaining: ${formatMoney(Math.max(0, currentBalance - Number(paymentAmount)))}`
+                          : 'Full payment (settles remaining balance)'}
+                      </span>
+                    </div>
+
+                    <div className="form-group" style={{ margin: 0 }}>
+                      <label className="form-label">Payment Method</label>
+                      <select
+                        className="form-select"
+                        value={paymentMethod}
+                        onChange={(e) => setPaymentMethod(e.target.value)}
+                      >
+                        <option value="upi">UPI (GPay / PhonePe / Paytm)</option>
+                        <option value="bank_transfer">Bank Transfer / NEFT / RTGS</option>
+                        <option value="card">Credit / Debit Card</option>
+                        <option value="cash">Cash</option>
+                        <option value="cheque">Cheque</option>
+                        <option value="other">Other Mode</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label className="form-label">
+                      Transaction ID / UTR / Reference <span className="req">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      placeholder="e.g. 329048192842 or UTR12345678"
+                      value={manualTxnId}
+                      onChange={(e) => setManualTxnId(e.target.value)}
+                      required
+                    />
+                  </div>
+
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label className="form-label">Payment Notes / Remark</label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      placeholder="e.g. Advance payment 50%, final payment, etc."
+                      value={paymentNotes}
+                      onChange={(e) => setPaymentNotes(e.target.value)}
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    className="btn-primary btn-full"
+                    onClick={handleRecordPayment}
+                    disabled={processing || !manualTxnId.trim() || Number(paymentAmount) <= 0}
+                    style={{ padding: '11px', marginTop: '4px' }}
+                  >
+                    <CheckCircle size={16} />
+                    {processing ? 'Recording Transaction...' : `Record Payment of ${formatMoney(paymentAmount)}`}
+                  </button>
+                </div>
+              )}
+
+              {/* Tab 2: QR Code & Scannable UPI */}
               {activeTab === 'qr' && (
-                <div style={{ textAlign: 'center' }}>
+                <div style={{ textAlign: 'center', padding: '10px 0' }}>
                   <div style={{ background: '#ffffff', borderRadius: '12px', padding: '16px', display: 'inline-block', border: '1px solid var(--border-color)' }}>
-                    <img src={qrCodeImgUrl} alt="Payment QR Code" width="200" height="200" style={{ borderRadius: '8px' }} />
+                    <img src={qrCodeImgUrl} alt="Payment QR Code" width="190" height="190" style={{ borderRadius: '8px' }} />
                   </div>
                   <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '10px' }}>
-                    <Smartphone size={14} style={{ verticalAlign: 'middle' }} /> Scan with any UPI app to pay
+                    <Smartphone size={14} style={{ verticalAlign: 'middle', marginRight: '4px' }} />
+                    Scan using Google Pay, PhonePe, Paytm, or any UPI app
                   </p>
                   {userProfile?.upiId && (
-                    <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                      UPI ID: <strong>{userProfile.upiId}</strong>
+                    <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)' }}>
+                      UPI VPA: <strong>{userProfile.upiId}</strong>
                     </p>
                   )}
                   <div style={{ marginTop: '12px' }}>
@@ -219,75 +454,80 @@ export default function PaymentModal({ invoice, userProfile, onClose, onRefresh,
                       href={paymentUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      style={{ fontSize: '13px', color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center', textDecoration: 'none' }}
+                      style={{ fontSize: '13px', color: 'var(--accent-primary)', display: 'inline-flex', alignItems: 'center', gap: '4px', textDecoration: 'none', fontWeight: 600 }}
                     >
-                      <ExternalLink size={14} /> Share Payment Link
+                      <ExternalLink size={14} /> Open Customer Payment Portal
                     </a>
                   </div>
                 </div>
               )}
 
-              {/* Manual Payment Recording Tab */}
-              {activeTab === 'manual' && (
+              {/* Tab 3: Payment History Ledger */}
+              {activeTab === 'history' && (
                 <div>
-                  <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '14px' }}>
-                    Record a payment you've already received from the client.
-                  </p>
-
-                  <div className="form-group" style={{ marginBottom: '12px' }}>
-                    <label className="form-label">Payment Method</label>
-                    <select className="form-select" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
-                      <option value="upi">UPI</option>
-                      <option value="bank_transfer">Bank Transfer / NEFT / IMPS</option>
-                      <option value="card">Credit / Debit Card</option>
-                      <option value="cash">Cash</option>
-                      <option value="cheque">Cheque</option>
-                      <option value="other">Other</option>
-                    </select>
-                  </div>
-
-                  <div className="form-group" style={{ marginBottom: '16px' }}>
-                    <label className="form-label">Transaction ID / Reference <span className="req">*</span></label>
-                    <input
-                      type="text"
-                      className="form-input"
-                      placeholder="e.g. UTR number, transaction ref, cheque number..."
-                      value={manualTxnId}
-                      onChange={(e) => setManualTxnId(e.target.value)}
-                    />
-                  </div>
-
-                  <button
-                    className="btn-primary btn-full"
-                    onClick={handleRecordPayment}
-                    disabled={processing || !manualTxnId.trim()}
-                  >
-                    <CheckCircle size={16} />
-                    {processing ? 'Recording...' : `Record Payment of ${formattedAmount}`}
-                  </button>
+                  {existingPayments.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '24px 0', color: 'var(--text-muted)' }}>
+                      <FileText size={32} style={{ margin: '0 auto 8px', opacity: 0.5 }} />
+                      <p style={{ fontSize: '13px' }}>No payments recorded yet for this invoice.</p>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {existingPayments.map((p, idx) => (
+                        <div
+                          key={p.id || idx}
+                          style={{
+                            background: 'var(--bg-card-subtle)',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '8px',
+                            padding: '10px 14px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between'
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontWeight: 700, fontSize: '13.5px', color: 'var(--text-primary)' }}>
+                              +{formatMoney(p.amount || invoice.amount)}
+                            </div>
+                            <div style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>
+                              Ref: {p.transactionId || 'DIRECT'} • {(p.method || 'upi').toUpperCase()}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className="btn-secondary btn-sm"
+                            onClick={() => handleDownloadReceipt(p)}
+                            title="Download Receipt for this transaction"
+                          >
+                            <Download size={13} /> Receipt
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 
-              {/* Demo Mode Tab */}
+              {/* Tab 4: Demo Mode Simulation */}
               {activeTab === 'demo' && (
-                <div style={{ textAlign: 'center' }}>
-                  <div style={{ background: '#fef3c7', border: '1px solid #fde68a', borderRadius: '8px', padding: '12px 16px', marginBottom: '16px' }}>
+                <div style={{ textAlign: 'center', padding: '12px 0' }}>
+                  <div style={{ background: '#fef3c7', border: '1px solid #fde68a', borderRadius: '8px', padding: '14px', marginBottom: '16px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'center', marginBottom: '4px' }}>
                       <AlertTriangle size={16} color="#92400e" />
-                      <strong style={{ color: '#92400e', fontSize: '13px' }}>Demo / Test Mode</strong>
+                      <strong style={{ color: '#92400e', fontSize: '13px' }}>Simulation / Testing Mode</strong>
                     </div>
                     <p style={{ fontSize: '12px', color: '#78350f', margin: 0 }}>
-                      This simulates a payment for testing purposes. No real money is transferred.
+                      Quickly test payment recording, status updates, and receipt generation with generated mock UTR references.
                     </p>
                   </div>
 
                   <button
+                    type="button"
                     className="btn-secondary btn-full"
                     onClick={handleDemoPayment}
                     disabled={processing}
-                    style={{ marginTop: '8px' }}
                   >
-                    {processing ? 'Processing Demo...' : `Simulate ${formattedAmount} Payment`}
+                    {processing ? 'Processing Demo...' : `Simulate Payment of ${formatMoney(currentBalance > 0 ? currentBalance : totalInvoiceAmt)}`}
                   </button>
                 </div>
               )}

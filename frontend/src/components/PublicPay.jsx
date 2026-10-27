@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
-import { CheckCircle2, ShieldCheck, Smartphone, QrCode, CreditCard, Lock, FileText, Download } from 'lucide-react';
+import { CheckCircle2, ShieldCheck, Smartphone, QrCode, CreditCard, Lock, FileText, Download, Receipt } from 'lucide-react';
 import { api } from '../api';
 import { formatCurrency } from '../utils/currency';
 import { generateInvoicePDF } from './pdfGenerator';
+import { generateReceiptPDF } from './receiptGenerator';
 
 export default function PublicPay() {
   const { invId } = useParams();
@@ -168,13 +169,24 @@ export default function PublicPay() {
                 </p>
                 {invoice.payment?.transactionId && (
                   <div style={{ background: 'var(--bg-card-subtle, #f1f5f9)', borderRadius: '8px', padding: '10px 16px', marginBottom: '16px' }}>
-                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Transaction: </span>
+                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Transaction Reference: </span>
                     <strong style={{ fontFamily: 'monospace' }}>{invoice.payment.transactionId}</strong>
                   </div>
                 )}
-                <button className="btn-secondary" style={{ width: '100%', padding: '12px' }} onClick={handleDownloadPDF}>
-                  <Download size={16} /> Download Invoice PDF
-                </button>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <button
+                    className="btn-primary"
+                    style={{ width: '100%', padding: '12px', background: '#16a34a' }}
+                    onClick={() => {
+                      generateReceiptPDF(invoice, userProfile, { company: invoice.client, email: invoice.clientEmail }, invoice.payment);
+                    }}
+                  >
+                    <Receipt size={16} /> Download Official Payment Receipt
+                  </button>
+                  <button className="btn-secondary" style={{ width: '100%', padding: '12px' }} onClick={handleDownloadPDF}>
+                    <Download size={16} /> Download Invoice PDF
+                  </button>
+                </div>
               </div>
             ) : (isPendingVerification || submitted) ? (
               /* PENDING VERIFICATION */

@@ -17,33 +17,38 @@
    CSS Variables & Theming (Light & Dark)
    ========================================= */
 :root {
+  --font-sans: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
   --bg-primary: #f8fafc;
   --bg-secondary: #ffffff;
   --bg-card: #ffffff;
   --bg-card-subtle: #f1f5f9;
   --bg-card-hover: #f8fafc;
-  
+
   --text-primary: #0f172a;
   --text-secondary: #475569;
   --text-muted: #94a3b8;
-  
+
   --border-color: #e2e8f0;
   --border-subtle: #f1f5f9;
   --border-focus: #2563eb;
-  
+
   --accent-primary: #2563eb;
   --accent-hover: #1d4ed8;
   --accent-subtle: #eff6ff;
   --accent-text: #ffffff;
-  
-  --card-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.02);
-  --card-shadow-hover: 0 4px 12px rgba(0, 0, 0, 0.06);
-  --modal-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
-  
+
+  --card-shadow: 0 1px 3px rgba(15, 23, 42, 0.04), 0 4px 16px -2px rgba(15, 23, 42, 0.04);
+  --card-shadow-hover: 0 10px 25px -4px rgba(15, 23, 42, 0.08), 0 4px 12px -2px rgba(15, 23, 42, 0.04);
+  --modal-shadow: 0 24px 48px -12px rgba(15, 23, 42, 0.18), 0 12px 24px -6px rgba(15, 23, 42, 0.08);
+
   --badge-paid-bg: #dcfce7;
   --badge-paid-text: #166534;
   --badge-sent-bg: #dbeafe;
   --badge-sent-text: #1e40af;
+  --badge-partial-bg: #e0e7ff;
+  --badge-partial-text: #3730a3;
   --badge-draft-bg: #f1f5f9;
   --badge-draft-text: #475569;
   --badge-overdue-bg: #fee2e2;
@@ -51,33 +56,35 @@
 }
 
 [data-theme="dark"], .dark {
-  --bg-primary: #0b0f19;
+  --bg-primary: #0a0f1d;
   --bg-secondary: #111827;
-  --bg-card: #1f2937;
-  --bg-card-subtle: #374151;
-  --bg-card-hover: #283548;
-  
-  --text-primary: #f9fafb;
+  --bg-card: #161f30;
+  --bg-card-subtle: #1e293b;
+  --bg-card-hover: #222f44;
+
+  --text-primary: #f8fafc;
   --text-secondary: #cbd5e1;
   --text-muted: #64748b;
-  
-  --border-color: #374151;
-  --border-subtle: #1f2937;
+
+  --border-color: #27354a;
+  --border-subtle: #1e293b;
   --border-focus: #3b82f6;
-  
+
   --accent-primary: #3b82f6;
   --accent-hover: #2563eb;
-  --accent-subtle: #1e293b;
+  --accent-subtle: rgba(59, 130, 246, 0.15);
   --accent-text: #ffffff;
-  
-  --card-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-  --card-shadow-hover: 0 6px 16px rgba(0, 0, 0, 0.4);
-  --modal-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
-  
+
+  --card-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  --card-shadow-hover: 0 10px 28px -4px rgba(0, 0, 0, 0.5);
+  --modal-shadow: 0 25px 60px -12px rgba(0, 0, 0, 0.7);
+
   --badge-paid-bg: rgba(22, 163, 74, 0.2);
   --badge-paid-text: #4ade80;
   --badge-sent-bg: rgba(37, 99, 235, 0.2);
   --badge-sent-text: #60a5fa;
+  --badge-partial-bg: rgba(99, 102, 241, 0.2);
+  --badge-partial-text: #a5b4fc;
   --badge-draft-bg: rgba(148, 163, 184, 0.2);
   --badge-draft-text: #94a3b8;
   --badge-overdue-bg: rgba(220, 38, 38, 0.2);
@@ -94,11 +101,12 @@
 }
 
 body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: var(--font-sans);
   background-color: var(--bg-primary);
   color: var(--text-primary);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   overflow-x: hidden;
   transition: background-color 0.2s ease, color 0.2s ease;
 }
@@ -132,6 +140,30 @@ body {
   margin-bottom: 24px;
   text-decoration: none;
   color: var(--text-primary);
+}
+
+.sidebar-close-mobile-btn {
+  display: none;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 6px;
+  margin-left: auto;
+}
+
+.sidebar-close-mobile-btn:hover {
+  background: var(--bg-card-subtle);
+  color: var(--text-primary);
+}
+
+@media (max-width: 768px) {
+  .sidebar-close-mobile-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
 }
 
 .brand-icon {
@@ -744,6 +776,12 @@ body {
 .status-badge.paid {
   background: var(--badge-paid-bg);
   color: var(--badge-paid-text);
+}
+
+.status-badge.partially_paid {
+  background: var(--badge-partial-bg);
+  color: var(--badge-partial-text);
+  border: 1px solid rgba(99, 102, 241, 0.25);
 }
 
 .status-badge.sent {
@@ -1701,9 +1739,30 @@ tbody tr:hover {
   }
   .main-wrapper {
     margin-left: 0;
+    min-width: 0;
+    max-width: 100vw;
+    width: 100%;
+    overflow-x: hidden;
   }
   .topbar {
-    padding: 0 16px;
+    padding: 0 12px;
+    gap: 8px;
+    max-width: 100vw;
+  }
+  .topbar-currency-select {
+    max-width: 130px;
+    font-size: 11.5px !important;
+  }
+  .topbar-currency-label {
+    display: none;
+  }
+  .user-name {
+    display: none;
+  }
+  .user-pill {
+    padding: 2px !important;
+    border: none !important;
+    background: transparent !important;
   }
   .content-page {
     padding: 16px 12px;
@@ -2102,3 +2161,80 @@ tbody tr:hover {
   background: #dc2626;
   color: #ffffff;
 }
+
+/* ==========================================================
+   Smooth Animations & Tactile Micro-Interactions
+   ========================================================== */
+.content-page {
+  animation: pageFadeIn 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes pageFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.metrics-grid > .metric-card {
+  animation: cardFadeUp 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.metrics-grid > .metric-card:nth-child(1) { animation-delay: 0.04s; }
+.metrics-grid > .metric-card:nth-child(2) { animation-delay: 0.08s; }
+.metrics-grid > .metric-card:nth-child(3) { animation-delay: 0.12s; }
+.metrics-grid > .metric-card:nth-child(4) { animation-delay: 0.16s; }
+
+@keyframes cardFadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Button & Card tactile spring press effect */
+.btn-primary:active,
+.btn-secondary:active,
+.btn-danger:active,
+.sidebar-create-btn:active,
+.quick-action-btn:active,
+.pagination-btn:active,
+.pagination-num:active {
+  transform: scale(0.975);
+}
+
+/* Tab indicator transition */
+.tab-btn {
+  position: relative;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Table Monospace Numbers for Financial Precision */
+.table-amount,
+.table-amount span,
+.metric-value,
+.summary-total-val {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum', 'cv02', 'cv03', 'cv04', 'cv11';
+}
+
+/* Glassmorphic Topbar */
+.topbar {
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  background: rgba(255, 255, 255, 0.88);
+}
+
+[data-theme="dark"] .topbar,
+.dark .topbar {
+  background: rgba(17, 24, 39, 0.88);
+}
+

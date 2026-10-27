@@ -25,12 +25,13 @@ export const EXCHANGE_RATES_USD = {
 
 export function getCurrencyCode(currencyString) {
   if (!currencyString) return 'INR';
-  if (currencyString.includes('USD')) return 'USD';
-  if (currencyString.includes('EUR')) return 'EUR';
-  if (currencyString.includes('GBP')) return 'GBP';
-  if (currencyString.includes('CAD')) return 'CAD';
-  if (currencyString.includes('AUD')) return 'AUD';
-  if (currencyString.includes('INR')) return 'INR';
+  const str = String(currencyString).toUpperCase();
+  if (str.includes('USD') || str === '$') return 'USD';
+  if (str.includes('EUR') || str === '€') return 'EUR';
+  if (str.includes('GBP') || str === '£') return 'GBP';
+  if (str.includes('CAD')) return 'CAD';
+  if (str.includes('AUD')) return 'AUD';
+  if (str.includes('INR') || str === '₹') return 'INR';
   return 'INR';
 }
 
@@ -40,13 +41,28 @@ export function getCurrencySymbol(currencyString) {
 }
 
 export function formatCurrency(amount, currencyString) {
-  const symbol = getCurrencySymbol(currencyString);
+  const code = getCurrencyCode(currencyString);
+  const symbol = CURRENCY_SYMBOLS[code] || '₹';
   const num = Number(amount || 0);
-  const formattedNumber = num.toLocaleString('en-IN', {
+
+  // Use Indian number formatting (Lakhs/Crores) for INR, and standard for others
+  const locale = code === 'INR' ? 'en-IN' : 'en-US';
+  const formattedNumber = num.toLocaleString(locale, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   });
+
   return `${symbol}${formattedNumber}`;
+}
+
+export function formatNumberOnly(amount, currencyString) {
+  const code = getCurrencyCode(currencyString);
+  const num = Number(amount || 0);
+  const locale = code === 'INR' ? 'en-IN' : 'en-US';
+  return num.toLocaleString(locale, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
 }
 
 export function convertCurrency(amount, fromCurrencyString, toCurrencyCode) {
@@ -62,6 +78,6 @@ export function convertCurrency(amount, fromCurrencyString, toCurrencyCode) {
     code: toCurrencyCode,
     symbol: CURRENCY_SYMBOLS[toCurrencyCode] || toCurrencyCode,
     amount: convertedAmount,
-    formatted: `${CURRENCY_SYMBOLS[toCurrencyCode] || ''}${convertedAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    formatted: `${CURRENCY_SYMBOLS[toCurrencyCode] || ''}${convertedAmount.toLocaleString(toCurrencyCode === 'INR' ? 'en-IN' : 'en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
   };
 }

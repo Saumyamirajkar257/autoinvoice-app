@@ -327,6 +327,22 @@ export default function Auth({ onLoginSuccess }) {
           >
             {loading ? 'Please wait...' : (isSignUp ? 'Create account' : 'Sign in')}
           </button>
+
+          <div style={{ marginTop: '14px', textAlign: 'center' }}>
+            <button
+              type="button"
+              className="btn-secondary btn-full"
+              onClick={() => {
+                onLoginSuccess({
+                  fullName: 'Saumya Mirajkar',
+                  email: 'saumyamir25@gmail.com'
+                });
+              }}
+              style={{ padding: '10px', fontSize: '13px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+            >
+              <span>⚡</span> Quick Demo Sign In
+            </button>
+          </div>
         </form>
       </div>
 

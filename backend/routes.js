@@ -1,12 +1,13 @@
 const express = require('express');
 const router = express.Router();
 const db = require('./database');
-const { requireAuth, optionalAuth, firestore } = require('./middleware/auth');
+const { requireAuth, requireAdmin, optionalAuth, generateToken, firestore } = require('./middleware/auth');
+const { authLimiter, emailLimiter, aiLimiter } = require('./middleware/rateLimiter');
 const emailService = require('./services/emailService');
 const pdfService = require('./services/pdfService');
 
 // ============================================================
-// PUBLIC ROUTES (no auth required)
+// PUBLIC ROUTES (Rate limited, no authentication required)
 // ============================================================
 
 // --- Public Invoice View (for client payment page) ---
@@ -15,7 +16,7 @@ router.get('/public/invoices/:id', async (req, res) => {
     const { id } = req.params;
     const { uid } = req.query; // owner UID passed as query param
 
-    if (uid) {
+    if (uid && firestore) {
       // Try Firestore first
       try {
         const docRef = firestore.collection('users').doc(uid).collection('invoices').doc(id);
@@ -41,21 +42,20 @@ router.get('/public/invoices/:id', async (req, res) => {
           return res.json({ invoice, profile });
         }
       } catch (err) {
-        console.warn('Firestore public invoice error:', err.message);
+        console.warn('Firestore public invoice lookup warning:', err.message);
       }
     }
 
     // Fallback to local database
-    const invoices = db.getInvoices();
-    const invoice = invoices.find(i => String(i.id).toLowerCase() === String(id).toLowerCase());
+    const invoice = db.getInvoiceById(id, uid);
     if (!invoice) {
       return res.status(404).json({ error: 'Invoice not found' });
     }
     
-    const profile = db.getProfile();
+    const profile = db.getProfile(uid);
     res.json({ invoice, profile });
   } catch (err) {
-    console.error('Public invoice error:', err);
+    console.error('Public invoice error:', err.message);
     res.status(500).json({ error: 'Unable to load invoice. Please try again.' });
   }
 });
@@ -66,22 +66,23 @@ router.post('/public/invoices/:id/confirm-payment', async (req, res) => {
     const { id } = req.params;
     const { uid, transactionId, method, payerName, payerEmail } = req.body;
 
-    if (!transactionId) {
+    if (!transactionId || typeof transactionId !== 'string' || transactionId.trim().length === 0) {
       return res.status(400).json({ error: 'Transaction reference is required' });
     }
 
+    const cleanTxId = transactionId.trim().substring(0, 100);
     const payment = {
       status: 'pending_verification',
-      transactionId: transactionId.trim(),
+      transactionId: cleanTxId,
       method: method || 'upi',
       paidAt: new Date().toISOString(),
       verifiedAt: null,
       verifiedBy: null,
-      payerName: payerName || '',
-      payerEmail: payerEmail || ''
+      payerName: (payerName || '').substring(0, 100),
+      payerEmail: (payerEmail || '').substring(0, 100)
     };
 
-    if (uid) {
+    if (uid && firestore) {
       try {
         const docRef = firestore.collection('users').doc(uid).collection('invoices').doc(id);
         const snap = await docRef.get();
@@ -108,12 +109,12 @@ router.post('/public/invoices/:id/confirm-payment', async (req, res) => {
           });
         }
       } catch (err) {
-        console.warn('Firestore payment confirmation error:', err.message);
+        console.warn('Firestore payment confirmation warning:', err.message);
       }
     }
 
-    // Fallback to local
-    const updated = db.updateInvoice(id, { payment, status: 'pending_verification' });
+    // Fallback to local database
+    const updated = db.updateInvoice(id, { payment, status: 'pending_verification' }, uid);
     if (!updated) {
       return res.status(404).json({ error: 'Invoice not found' });
     }
@@ -123,180 +124,477 @@ router.post('/public/invoices/:id/confirm-payment', async (req, res) => {
       payment 
     });
   } catch (err) {
-    console.error('Payment confirmation error:', err);
+    console.error('Payment confirmation error:', err.message);
     res.status(500).json({ error: 'Unable to submit payment. Please try again.' });
   }
 });
 
 
 // ============================================================
-// AUTHENTICATED ROUTES (Firebase ID token required)
+// AUTHENTICATION ROUTES (Rate limited & Bcrypt Hashed)
 // ============================================================
 
-// --- Auth Routes (legacy compatibility) ---
-router.post('/auth/login', (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) {
-    return res.status(400).json({ error: 'Email and password are required' });
-  }
-  const profile = db.getProfile();
-  res.json({
-    message: 'Login successful',
-    user: {
-      fullName: profile.fullName || 'User',
-      email: email
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+router.post('/auth/signup', authLimiter, async (req, res) => {
+  try {
+    const { fullName, email, password } = req.body;
+    
+    if (!fullName || typeof fullName !== 'string' || fullName.trim().length === 0) {
+      return res.status(400).json({ error: 'Full name is required' });
     }
-  });
-});
 
-router.post('/auth/signup', (req, res) => {
-  const { fullName, email, password } = req.body;
-  if (!fullName || !email || !password) {
-    return res.status(400).json({ error: 'All fields are required' });
+    if (!email || typeof email !== 'string' || !EMAIL_REGEX.test(email.trim())) {
+      return res.status(400).json({ error: 'A valid email address is required' });
+    }
+
+    if (!password || typeof password !== 'string' || password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+    }
+
+    const cleanFullName = fullName.trim();
+    const cleanEmail = email.trim().toLowerCase();
+
+    // Create user with bcrypt hashing
+    const user = await db.createAuthUser({
+      fullName: cleanFullName,
+      email: cleanEmail,
+      password: password
+    });
+
+    // Generate JWT token
+    const token = generateToken(user);
+
+    res.status(201).json({
+      message: 'Account created successfully',
+      token,
+      user: {
+        id: user.id,
+        fullName: user.fullName,
+        email: user.email
+      }
+    });
+  } catch (err) {
+    console.error('Signup error:', err.message);
+    res.status(400).json({ error: err.message || 'Failed to create account' });
   }
-  db.updateProfile({ fullName, email });
-  res.status(201).json({
-    message: 'Account created successfully',
-    user: { fullName, email }
-  });
 });
 
-// --- Dashboard API ---
-router.get('/dashboard', (req, res) => {
-  const stats = db.getDashboardStats();
-  res.json(stats);
-});
+router.post('/auth/login', authLimiter, async (req, res) => {
+  try {
+    const { email, password } = req.body;
 
-// --- Clients API ---
-router.get('/clients', (req, res) => {
-  res.json(db.getClients());
-});
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
 
-router.post('/clients', (req, res) => {
-  const { company } = req.body;
-  if (!company || company.trim() === '') {
-    return res.status(400).json({ error: 'Company name is required' });
+    const cleanEmail = String(email).trim().toLowerCase();
+    const verifiedUser = await db.verifyAuthUser(cleanEmail, String(password));
+
+    if (!verifiedUser) {
+      return res.status(401).json({ 
+        error: 'Invalid credentials',
+        message: 'Invalid email or password. Please try again.'
+      });
+    }
+
+    // Generate authenticated JWT token
+    const token = generateToken(verifiedUser);
+
+    res.json({
+      message: 'Login successful',
+      token,
+      user: {
+        id: verifiedUser.id,
+        fullName: verifiedUser.fullName,
+        email: verifiedUser.email
+      }
+    });
+  } catch (err) {
+    console.error('Login error:', err.message);
+    res.status(500).json({ error: 'Authentication service error' });
   }
-  const client = db.addClient(req.body);
-  res.status(201).json(client);
 });
 
-router.put('/clients/:id', (req, res) => {
-  const updated = db.updateClient(req.params.id, req.body);
-  if (!updated) {
-    return res.status(404).json({ error: 'Client not found' });
+
+// ============================================================
+// PROTECTED USER ROUTES (requireAuth & Tenant Scoping)
+// ============================================================
+
+// --- Dashboard API (Scoped to req.user.uid) ---
+router.get('/dashboard', requireAuth, async (req, res) => {
+  try {
+    const uid = req.user.uid;
+
+    if (firestore) {
+      try {
+        const [invoicesSnap, clientsSnap] = await Promise.all([
+          firestore.collection('users').doc(uid).collection('invoices').get(),
+          firestore.collection('users').doc(uid).collection('clients').get()
+        ]);
+
+        const userInvoices = invoicesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        const userClients = clientsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+        const totalRevenue = userInvoices
+          .filter(i => i.status === 'paid')
+          .reduce((sum, i) => sum + Number(i.amount || 0), 0);
+
+        const pendingAmount = userInvoices
+          .filter(i => i.status === 'sent')
+          .reduce((sum, i) => sum + Number(i.amount || 0), 0);
+
+        const paidCount = userInvoices.filter(i => i.status === 'paid').length;
+        const draftCount = userInvoices.filter(i => i.status === 'draft').length;
+        const overdueCount = userInvoices.filter(i => i.status === 'overdue').length;
+
+        const avgClientRevenue = userClients.length > 0
+          ? (userInvoices.reduce((sum, i) => sum + Number(i.amount || 0), 0) / userClients.length).toFixed(2)
+          : '0.00';
+
+        return res.json({
+          totalInvoices: userInvoices.length,
+          totalRevenue: Number(totalRevenue.toFixed(2)),
+          pendingAmount: Number(pendingAmount.toFixed(2)),
+          totalClients: userClients.length,
+          avgClientRevenue: Number(avgClientRevenue),
+          paidCount,
+          draftCount,
+          overdueCount,
+          recentInvoices: userInvoices.slice(0, 5)
+        });
+      } catch (err) {
+        console.warn('Firestore dashboard error, falling back to local:', err.message);
+      }
+    }
+
+    const stats = db.getDashboardStats(uid);
+    res.json(stats);
+  } catch (err) {
+    console.error('Dashboard error:', err.message);
+    res.status(500).json({ error: 'Failed to retrieve dashboard metrics' });
   }
-  res.json(updated);
 });
 
-router.delete('/clients/:id', (req, res) => {
-  const success = db.deleteClient(req.params.id);
-  if (!success) {
-    return res.status(404).json({ error: 'Client not found' });
+// --- Clients API (Multi-Tenant Scoped) ---
+router.get('/clients', requireAuth, async (req, res) => {
+  try {
+    const uid = req.user.uid;
+    if (firestore) {
+      try {
+        const snap = await firestore.collection('users').doc(uid).collection('clients').get();
+        const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        return res.json(list);
+      } catch (err) {
+        console.warn('Firestore getClients error:', err.message);
+      }
+    }
+    res.json(db.getClients(uid));
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to retrieve clients' });
   }
-  res.json({ message: 'Client deleted successfully' });
 });
 
-// --- Invoices API ---
-router.get('/invoices', (req, res) => {
-  res.json(db.getInvoices());
+router.post('/clients', requireAuth, async (req, res) => {
+  try {
+    const uid = req.user.uid;
+    const { company, contact, email, phone, country, gstin } = req.body;
+    
+    if (!company || String(company).trim() === '') {
+      return res.status(400).json({ error: 'Company name is required' });
+    }
+
+    const clientData = {
+      company: String(company).trim(),
+      contact: contact ? String(contact).trim() : '',
+      email: email ? String(email).trim() : '',
+      phone: phone ? String(phone).trim() : '',
+      country: country || 'India',
+      gstin: gstin ? String(gstin).trim() : '',
+      uid,
+      createdAt: new Date().toISOString()
+    };
+
+    if (firestore) {
+      try {
+        const docRef = await firestore.collection('users').doc(uid).collection('clients').add(clientData);
+        return res.status(201).json({ id: docRef.id, ...clientData });
+      } catch (err) {
+        console.warn('Firestore addClient error:', err.message);
+      }
+    }
+
+    const client = db.addClient(clientData, uid);
+    res.status(201).json(client);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to create client' });
+  }
 });
 
-router.post('/invoices', (req, res) => {
-  const { client, description, items } = req.body;
-  if (!client) {
-    return res.status(400).json({ error: 'Client is required' });
+router.put('/clients/:id', requireAuth, async (req, res) => {
+  try {
+    const uid = req.user.uid;
+    const { id } = req.params;
+
+    if (firestore) {
+      try {
+        const docRef = firestore.collection('users').doc(uid).collection('clients').doc(id);
+        const snap = await docRef.get();
+        if (snap.exists) {
+          await docRef.set(req.body, { merge: true });
+          return res.json({ id, ...req.body });
+        }
+      } catch (err) {
+        console.warn('Firestore updateClient error:', err.message);
+      }
+    }
+
+    const updated = db.updateClient(id, req.body, uid);
+    if (!updated) {
+      return res.status(404).json({ error: 'Client not found or unauthorized' });
+    }
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update client' });
   }
-  if (!description && (!items || items.length === 0 || !items[0].description)) {
-    return res.status(400).json({ error: 'Invoice item description is required' });
-  }
-  const invoice = db.addInvoice(req.body);
-  res.status(201).json(invoice);
 });
 
-router.put('/invoices/:id', (req, res) => {
-  const updated = db.updateInvoice(req.params.id, req.body);
-  if (!updated) {
-    return res.status(404).json({ error: 'Invoice not found' });
+router.delete('/clients/:id', requireAuth, async (req, res) => {
+  try {
+    const uid = req.user.uid;
+    const { id } = req.params;
+
+    if (firestore) {
+      try {
+        const docRef = firestore.collection('users').doc(uid).collection('clients').doc(id);
+        const snap = await docRef.get();
+        if (snap.exists) {
+          await docRef.delete();
+          return res.json({ message: 'Client deleted successfully' });
+        }
+      } catch (err) {
+        console.warn('Firestore deleteClient error:', err.message);
+      }
+    }
+
+    const success = db.deleteClient(id, uid);
+    if (!success) {
+      return res.status(404).json({ error: 'Client not found or unauthorized' });
+    }
+    res.json({ message: 'Client deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete client' });
   }
-  res.json(updated);
 });
 
-router.put('/invoices/:id/status', (req, res) => {
-  const { status } = req.body;
-  if (!status) {
-    return res.status(400).json({ error: 'Status is required' });
+
+// --- Invoices API (Multi-Tenant Scoped) ---
+router.get('/invoices', requireAuth, async (req, res) => {
+  try {
+    const uid = req.user.uid;
+    if (firestore) {
+      try {
+        const snap = await firestore.collection('users').doc(uid).collection('invoices').get();
+        const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        return res.json(list);
+      } catch (err) {
+        console.warn('Firestore getInvoices error:', err.message);
+      }
+    }
+    res.json(db.getInvoices(uid));
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to retrieve invoices' });
   }
-  const updated = db.updateInvoiceStatus(req.params.id, status);
-  if (!updated) {
-    return res.status(404).json({ error: 'Invoice not found' });
-  }
-  res.json(updated);
 });
 
-router.delete('/invoices/:id', (req, res) => {
-  const success = db.deleteInvoice(req.params.id);
-  if (!success) {
-    return res.status(404).json({ error: 'Invoice not found' });
+router.post('/invoices', requireAuth, async (req, res) => {
+  try {
+    const uid = req.user.uid;
+    const { client, description, items } = req.body;
+    
+    if (!client) {
+      return res.status(400).json({ error: 'Client is required' });
+    }
+    if (!description && (!items || items.length === 0 || !items[0].description)) {
+      return res.status(400).json({ error: 'Invoice item description is required' });
+    }
+
+    const invoiceData = {
+      ...req.body,
+      uid,
+      createdAt: new Date().toISOString()
+    };
+
+    if (firestore) {
+      try {
+        const invId = invoiceData.id || `INV-${Date.now().toString().slice(-4)}`;
+        await firestore.collection('users').doc(uid).collection('invoices').doc(invId).set({
+          ...invoiceData,
+          id: invId
+        });
+        return res.status(201).json({ id: invId, ...invoiceData });
+      } catch (err) {
+        console.warn('Firestore addInvoice error:', err.message);
+      }
+    }
+
+    const invoice = db.addInvoice(invoiceData, uid);
+    res.status(201).json(invoice);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to create invoice' });
   }
-  res.json({ message: 'Invoice deleted successfully' });
 });
 
-// --- Send Invoice to Client (Backend-powered with PDF attachment) ---
+router.put('/invoices/:id', requireAuth, async (req, res) => {
+  try {
+    const uid = req.user.uid;
+    const { id } = req.params;
+
+    if (firestore) {
+      try {
+        const docRef = firestore.collection('users').doc(uid).collection('invoices').doc(id);
+        const snap = await docRef.get();
+        if (snap.exists) {
+          await docRef.set(req.body, { merge: true });
+          return res.json({ id, ...req.body });
+        }
+      } catch (err) {
+        console.warn('Firestore updateInvoice error:', err.message);
+      }
+    }
+
+    const updated = db.updateInvoice(id, req.body, uid);
+    if (!updated) {
+      return res.status(404).json({ error: 'Invoice not found or unauthorized' });
+    }
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update invoice' });
+  }
+});
+
+router.put('/invoices/:id/status', requireAuth, async (req, res) => {
+  try {
+    const uid = req.user.uid;
+    const { id } = req.params;
+    const { status } = req.body;
+    
+    if (!status) {
+      return res.status(400).json({ error: 'Status is required' });
+    }
+
+    if (firestore) {
+      try {
+        const docRef = firestore.collection('users').doc(uid).collection('invoices').doc(id);
+        const snap = await docRef.get();
+        if (snap.exists) {
+          await docRef.update({ status });
+          return res.json({ id, status });
+        }
+      } catch (err) {
+        console.warn('Firestore updateStatus error:', err.message);
+      }
+    }
+
+    const updated = db.updateInvoiceStatus(id, status, uid);
+    if (!updated) {
+      return res.status(404).json({ error: 'Invoice not found or unauthorized' });
+    }
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update invoice status' });
+  }
+});
+
+router.delete('/invoices/:id', requireAuth, async (req, res) => {
+  try {
+    const uid = req.user.uid;
+    const { id } = req.params;
+
+    if (firestore) {
+      try {
+        const docRef = firestore.collection('users').doc(uid).collection('invoices').doc(id);
+        const snap = await docRef.get();
+        if (snap.exists) {
+          await docRef.delete();
+          return res.json({ message: 'Invoice deleted successfully' });
+        }
+      } catch (err) {
+        console.warn('Firestore deleteInvoice error:', err.message);
+      }
+    }
+
+    const success = db.deleteInvoice(id, uid);
+    if (!success) {
+      return res.status(404).json({ error: 'Invoice not found or unauthorized' });
+    }
+    res.json({ message: 'Invoice deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete invoice' });
+  }
+});
+
+
+// --- Transactional Email Delivery (Rate Limited) ---
 const handleSendInvoice = async (req, res) => {
   try {
     const { id } = req.params;
     const uid = req.user.uid;
 
-    // 1. Get invoice from Firestore or local db
+    // 1. Get invoice scoped by UID
     let invoice = null;
     let senderProfile = null;
 
-    try {
-      const invRef = firestore.collection('users').doc(uid).collection('invoices').doc(id);
-      const invSnap = await invRef.get();
-      if (invSnap.exists) {
-        invoice = { id: invSnap.id, ...invSnap.data() };
-      }
+    if (firestore) {
+      try {
+        const invRef = firestore.collection('users').doc(uid).collection('invoices').doc(id);
+        const invSnap = await invRef.get();
+        if (invSnap.exists) {
+          invoice = { id: invSnap.id, ...invSnap.data() };
+        }
 
-      const profileRef = firestore.collection('users').doc(uid).collection('profile').doc('data');
-      const profileSnap = await profileRef.get();
-      if (profileSnap.exists) {
-        senderProfile = profileSnap.data();
+        const profileRef = firestore.collection('users').doc(uid).collection('profile').doc('data');
+        const profileSnap = await profileRef.get();
+        if (profileSnap.exists) {
+          senderProfile = profileSnap.data();
+        }
+      } catch (err) {
+        console.warn('Firestore read error in email dispatch:', err.message);
       }
-    } catch (err) {
-      console.warn('Firestore read error, falling back to local:', err.message);
     }
 
-    // Fallback to local database
+    // Fallback to local database scoped by UID
     if (!invoice) {
-      const invoices = db.getInvoices();
-      invoice = invoices.find(i => String(i.id) === String(id));
+      invoice = db.getInvoiceById(id, uid);
     }
     if (!senderProfile) {
-      senderProfile = db.getProfile();
+      senderProfile = db.getProfile(uid);
     }
 
     if (!invoice) {
-      return res.status(404).json({ error: 'Invoice not found' });
+      return res.status(404).json({ error: 'Invoice not found or unauthorized' });
     }
 
     // 2. Validate recipient email
     const recipientEmail = (req.body && req.body.recipientEmail) || invoice.clientEmail;
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!recipientEmail || !emailRegex.test(recipientEmail.trim())) {
-      return res.status(400).json({ error: 'Unable to send the invoice. Please check the email address or try again.' });
+    if (!recipientEmail || !EMAIL_REGEX.test(recipientEmail.trim())) {
+      return res.status(400).json({ error: 'Unable to send the invoice. Please check the recipient email address.' });
     }
 
-    // 3. Build public payment & view URL (no login required for clients)
+    // 3. Build public payment & view URL
     const frontendUrl = process.env.FRONTEND_URL || 'https://autoinvoice-frontend.saumyamir25.workers.dev';
     const paymentUrl = `${frontendUrl}/#/pay/${encodeURIComponent(invoice.id)}?uid=${uid}`;
 
     // 4. Generate/attach official invoice PDF
     let pdfBuffer = null;
     if (req.body && req.body.pdfBase64) {
-      pdfBuffer = Buffer.from(req.body.pdfBase64, 'base64');
-    } else {
+      try {
+        pdfBuffer = Buffer.from(req.body.pdfBase64, 'base64');
+      } catch (e) {
+        console.warn('Invalid base64 PDF provided, generating fallback buffer.');
+      }
+    }
+    if (!pdfBuffer) {
       try {
         pdfBuffer = pdfService.generateInvoicePDFBuffer(invoice, senderProfile, { company: invoice.client, email: recipientEmail });
       } catch (pdfErr) {
@@ -309,7 +607,7 @@ const handleSendInvoice = async (req, res) => {
       content: pdfBuffer
     } : null;
 
-    // 5. Send transactional email through configured provider
+    // 5. Send transactional email through configured provider (safe HTML escaping applied)
     const result = await emailService.sendInvoiceEmail(
       invoice,
       senderProfile,
@@ -320,28 +618,30 @@ const handleSendInvoice = async (req, res) => {
 
     // 6. Record email status on invoice
     const sentAt = new Date().toISOString();
-    try {
-      const invRef = firestore.collection('users').doc(uid).collection('invoices').doc(id);
-      const snap = await invRef.get();
-      if (snap.exists) {
-        const data = snap.data();
-        const activity = data.activity || [];
-        activity.push({
-          event: 'email_sent',
-          timestamp: sentAt,
-          actor: 'owner',
-          details: { to: recipientEmail.trim(), messageId: result.messageId, withPdf: Boolean(pdfAttachment) }
-        });
-        await invRef.update({
-          activity,
-          emailStatus: 'sent',
-          emailSentTo: recipientEmail.trim(),
-          emailSentAt: sentAt,
-          status: data.status === 'draft' ? 'sent' : data.status
-        });
+    if (firestore) {
+      try {
+        const invRef = firestore.collection('users').doc(uid).collection('invoices').doc(id);
+        const snap = await invRef.get();
+        if (snap.exists) {
+          const data = snap.data();
+          const activity = data.activity || [];
+          activity.push({
+            event: 'email_sent',
+            timestamp: sentAt,
+            actor: 'owner',
+            details: { to: recipientEmail.trim(), messageId: result.messageId, withPdf: Boolean(pdfAttachment) }
+          });
+          await invRef.update({
+            activity,
+            emailStatus: 'sent',
+            emailSentTo: recipientEmail.trim(),
+            emailSentAt: sentAt,
+            status: data.status === 'draft' ? 'sent' : data.status
+          });
+        }
+      } catch (err) {
+        console.warn('Activity log error:', err.message);
       }
-    } catch (err) {
-      console.warn('Activity log error:', err.message);
     }
 
     res.json({
@@ -354,113 +654,62 @@ const handleSendInvoice = async (req, res) => {
     });
   } catch (err) {
     console.error('Send invoice email error:', err.message);
-
-    // Record failure in Firestore if possible
-    try {
-      const { id } = req.params;
-      const uid = req.user.uid;
-      const invRef = firestore.collection('users').doc(uid).collection('invoices').doc(id);
-      const snap = await invRef.get();
-      if (snap.exists) {
-        const data = snap.data();
-        const activity = data.activity || [];
-        activity.push({
-          event: 'email_failed',
-          timestamp: new Date().toISOString(),
-          actor: 'owner',
-          details: { error: err.message }
-        });
-        await invRef.update({
-          activity,
-          emailStatus: 'failed'
-        });
-      }
-    } catch (e) {
-      // ignore
-    }
-
     res.status(500).json({
-      error: 'Unable to send the invoice. Please check the email address or try again.',
+      error: 'Unable to send the invoice. Please verify email settings.',
+      details: err.message,
       emailStatus: 'failed'
     });
   }
 };
 
-router.post('/invoices/:id/send', requireAuth, handleSendInvoice);
-router.post('/invoices/:id/send-email', requireAuth, handleSendInvoice);
+router.post('/invoices/:id/send', requireAuth, emailLimiter, handleSendInvoice);
+router.post('/invoices/:id/send-email', requireAuth, emailLimiter, handleSendInvoice);
 
-// --- Send Payment Reminder ---
-router.post('/invoices/:id/send-reminder', requireAuth, async (req, res) => {
+// --- Send Payment Reminder (Rate Limited) ---
+router.post('/invoices/:id/send-reminder', requireAuth, emailLimiter, async (req, res) => {
   try {
     const { id } = req.params;
-    const { reminderType } = req.body; // 'upcoming', 'due_today', 'overdue'
+    const { reminderType } = req.body;
     const uid = req.user.uid;
 
     let invoice = null;
     let senderProfile = null;
 
-    try {
-      const invRef = firestore.collection('users').doc(uid).collection('invoices').doc(id);
-      const invSnap = await invRef.get();
-      if (invSnap.exists) {
-        invoice = { id: invSnap.id, ...invSnap.data() };
-      }
+    if (firestore) {
+      try {
+        const invRef = firestore.collection('users').doc(uid).collection('invoices').doc(id);
+        const invSnap = await invRef.get();
+        if (invSnap.exists) {
+          invoice = { id: invSnap.id, ...invSnap.data() };
+        }
 
-      const profileRef = firestore.collection('users').doc(uid).collection('profile').doc('data');
-      const profileSnap = await profileRef.get();
-      if (profileSnap.exists) {
-        senderProfile = profileSnap.data();
+        const profileRef = firestore.collection('users').doc(uid).collection('profile').doc('data');
+        const profileSnap = await profileRef.get();
+        if (profileSnap.exists) {
+          senderProfile = profileSnap.data();
+        }
+      } catch (err) {
+        console.warn('Firestore read error in reminder:', err.message);
       }
-    } catch (err) {
-      console.warn('Firestore read error:', err.message);
     }
+
+    if (!invoice) invoice = db.getInvoiceById(id, uid);
+    if (!senderProfile) senderProfile = db.getProfile(uid);
 
     if (!invoice) {
-      const invoices = db.getInvoices();
-      invoice = invoices.find(i => String(i.id) === String(id));
-    }
-    if (!senderProfile) {
-      senderProfile = db.getProfile();
-    }
-
-    if (!invoice) {
-      return res.status(404).json({ error: 'Invoice not found' });
+      return res.status(404).json({ error: 'Invoice not found or unauthorized' });
     }
 
     const recipientEmail = invoice.clientEmail;
-    if (!recipientEmail) {
-      return res.status(400).json({ error: 'Client email address is missing.' });
+    if (!recipientEmail || !EMAIL_REGEX.test(recipientEmail.trim())) {
+      return res.status(400).json({ error: 'Client email address is invalid or missing.' });
     }
 
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const frontendUrl = process.env.FRONTEND_URL || 'https://autoinvoice-frontend.saumyamir25.workers.dev';
     const paymentUrl = `${frontendUrl}/#/pay/${encodeURIComponent(invoice.id)}?uid=${uid}`;
 
     const type = reminderType || 'upcoming';
     const result = await emailService.sendReminderEmail(invoice, senderProfile, recipientEmail, type, paymentUrl);
-
-    // Log reminder activity
-    try {
-      const invRef = firestore.collection('users').doc(uid).collection('invoices').doc(id);
-      const snap = await invRef.get();
-      if (snap.exists) {
-        const data = snap.data();
-        const activity = data.activity || [];
-        activity.push({
-          event: 'reminder_sent',
-          timestamp: new Date().toISOString(),
-          actor: 'owner',
-          details: { to: recipientEmail, type }
-        });
-        const reminderCount = (data.reminderCount || 0) + 1;
-        await invRef.update({ 
-          activity, 
-          lastReminderSent: new Date().toISOString(), 
-          reminderCount 
-        });
-      }
-    } catch (err) {
-      console.warn('Reminder activity log error:', err.message);
-    }
 
     res.json({
       success: true,
@@ -468,81 +717,157 @@ router.post('/invoices/:id/send-reminder', requireAuth, async (req, res) => {
       ...result
     });
   } catch (err) {
-    console.error('Send reminder error:', err);
-    res.status(500).json({ 
-      error: 'Unable to send reminder',
-      message: err.message || 'Please try again.'
-    });
+    console.error('Send reminder error:', err.message);
+    res.status(500).json({ error: 'Unable to send reminder' });
   }
 });
 
-// --- Record Manual Payment (business owner verifies payment) ---
+// --- Record Manual Payment (Supports Partial & Full Payments) ---
 router.post('/invoices/:id/record-payment', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
     const uid = req.user.uid;
     const { transactionId, method, amount, notes } = req.body;
 
-    if (!transactionId) {
-      return res.status(400).json({ error: 'Transaction ID is required' });
+    if (!transactionId || String(transactionId).trim() === '') {
+      return res.status(400).json({ error: 'Transaction reference is required' });
     }
 
-    const payment = {
+    const cleanTxId = String(transactionId).trim();
+
+    if (firestore) {
+      try {
+        const invRef = firestore.collection('users').doc(uid).collection('invoices').doc(id);
+        const snap = await invRef.get();
+        if (snap.exists) {
+          const data = snap.data();
+          const totalInvoiceAmt = Number(data.amount || 0);
+
+          // Existing payments array
+          const existingPayments = Array.isArray(data.payments) ? data.payments : (data.payment && data.payment.status === 'verified' ? [data.payment] : []);
+
+          // Prevent exact duplicate transaction reference
+          const isDuplicate = existingPayments.some(p => p.transactionId && p.transactionId.toLowerCase() === cleanTxId.toLowerCase());
+          if (isDuplicate) {
+            return res.status(400).json({ error: 'A payment with this transaction reference has already been recorded.' });
+          }
+
+          const previousPaid = existingPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+          const payAmt = Math.min(Number(amount) || (totalInvoiceAmt - previousPaid), Math.max(0, totalInvoiceAmt - previousPaid));
+          const totalPaidToDate = Number((previousPaid + payAmt).toFixed(2));
+          const remainingBalance = Math.max(0, Number((totalInvoiceAmt - totalPaidToDate).toFixed(2)));
+
+          const receiptNumber = `REC-${(data.id || id).replace(/^INV-?/i, '')}-${existingPayments.length + 1}`;
+
+          const newPaymentRecord = {
+            id: `pay_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            receiptNumber,
+            status: 'verified',
+            transactionId: cleanTxId,
+            method: method || 'bank_transfer',
+            amount: payAmt,
+            previousPaid,
+            totalPaidToDate,
+            remainingBalance,
+            paidAt: new Date().toISOString(),
+            verifiedAt: new Date().toISOString(),
+            verifiedBy: 'manual',
+            notes: notes || ''
+          };
+
+          const updatedPayments = [...existingPayments, newPaymentRecord];
+          const newStatus = remainingBalance <= 0 ? 'paid' : (totalPaidToDate > 0 ? 'partially_paid' : (data.status || 'sent'));
+
+          const activity = data.activity || [];
+          activity.push({
+            event: 'payment_recorded',
+            timestamp: new Date().toISOString(),
+            actor: 'owner',
+            details: { transactionId: cleanTxId, amount: payAmt, remainingBalance, receiptNumber }
+          });
+
+          await invRef.update({
+            payments: updatedPayments,
+            payment: newPaymentRecord, // Most recent payment
+            amountPaid: totalPaidToDate,
+            balanceDue: remainingBalance,
+            status: newStatus,
+            activity,
+            paidAt: newPaymentRecord.paidAt
+          });
+
+          return res.json({
+            success: true,
+            message: remainingBalance <= 0 ? 'Payment received in full. Invoice marked as paid.' : `Partial payment of ${payAmt} recorded. Remaining: ${remainingBalance}`,
+            payment: newPaymentRecord,
+            payments: updatedPayments,
+            status: newStatus,
+            balanceDue: remainingBalance
+          });
+        }
+      } catch (err) {
+        console.warn('Firestore payment record error:', err.message);
+      }
+    }
+
+    // Local DB fallback
+    const invoice = db.getInvoiceById(id, uid);
+    if (!invoice) {
+      return res.status(404).json({ error: 'Invoice not found or unauthorized' });
+    }
+
+    const totalInvoiceAmt = Number(invoice.amount || 0);
+    const existingPayments = Array.isArray(invoice.payments) ? invoice.payments : (invoice.payment && invoice.payment.status === 'verified' ? [invoice.payment] : []);
+
+    const isDuplicate = existingPayments.some(p => p.transactionId && p.transactionId.toLowerCase() === cleanTxId.toLowerCase());
+    if (isDuplicate) {
+      return res.status(400).json({ error: 'A payment with this transaction reference has already been recorded.' });
+    }
+
+    const previousPaid = existingPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+    const payAmt = Math.min(Number(amount) || (totalInvoiceAmt - previousPaid), Math.max(0, totalInvoiceAmt - previousPaid));
+    const totalPaidToDate = Number((previousPaid + payAmt).toFixed(2));
+    const remainingBalance = Math.max(0, Number((totalInvoiceAmt - totalPaidToDate).toFixed(2)));
+    const receiptNumber = `REC-${(invoice.id || id).replace(/^INV-?/i, '')}-${existingPayments.length + 1}`;
+
+    const newPaymentRecord = {
+      id: `pay_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      receiptNumber,
       status: 'verified',
-      transactionId: transactionId.trim(),
+      transactionId: cleanTxId,
       method: method || 'bank_transfer',
+      amount: payAmt,
+      previousPaid,
+      totalPaidToDate,
+      remainingBalance,
       paidAt: new Date().toISOString(),
       verifiedAt: new Date().toISOString(),
       verifiedBy: 'manual',
-      amount: amount || null,
       notes: notes || ''
     };
 
-    try {
-      const invRef = firestore.collection('users').doc(uid).collection('invoices').doc(id);
-      const snap = await invRef.get();
-      if (snap.exists) {
-        const data = snap.data();
-        const activity = data.activity || [];
-        activity.push({
-          event: 'payment_recorded',
-          timestamp: new Date().toISOString(),
-          actor: 'owner',
-          details: { transactionId: payment.transactionId, method: payment.method }
-        });
-        activity.push({
-          event: 'payment_verified',
-          timestamp: new Date().toISOString(),
-          actor: 'owner',
-          details: { verifiedBy: 'manual' }
-        });
+    const updatedPayments = [...existingPayments, newPaymentRecord];
+    const newStatus = remainingBalance <= 0 ? 'paid' : (totalPaidToDate > 0 ? 'partially_paid' : (invoice.status || 'sent'));
 
-        await invRef.update({ 
-          payment,
-          status: 'paid',
-          activity,
-          paidAt: payment.paidAt
-        });
+    const updated = db.updateInvoice(id, {
+      payments: updatedPayments,
+      payment: newPaymentRecord,
+      amountPaid: totalPaidToDate,
+      balanceDue: remainingBalance,
+      status: newStatus
+    }, uid);
 
-        return res.json({ 
-          success: true, 
-          message: 'Payment recorded and invoice marked as paid.',
-          payment 
-        });
-      }
-    } catch (err) {
-      console.warn('Firestore payment record error:', err.message);
-    }
-
-    // Fallback local
-    const updated = db.updateInvoice(id, { payment, status: 'paid' });
-    if (!updated) {
-      return res.status(404).json({ error: 'Invoice not found' });
-    }
-    res.json({ success: true, message: 'Payment recorded.', payment });
+    res.json({
+      success: true,
+      message: remainingBalance <= 0 ? 'Payment received in full. Invoice marked as paid.' : `Partial payment of ${payAmt} recorded. Remaining: ${remainingBalance}`,
+      payment: newPaymentRecord,
+      payments: updatedPayments,
+      status: newStatus,
+      balanceDue: remainingBalance
+    });
   } catch (err) {
-    console.error('Record payment error:', err);
-    res.status(500).json({ error: 'Unable to record payment. Please try again.' });
+    console.error('Record payment error:', err.message);
+    res.status(500).json({ error: 'Unable to record payment' });
   }
 });
 
@@ -552,51 +877,53 @@ router.post('/invoices/:id/verify-payment', requireAuth, async (req, res) => {
     const { id } = req.params;
     const uid = req.user.uid;
 
-    try {
-      const invRef = firestore.collection('users').doc(uid).collection('invoices').doc(id);
-      const snap = await invRef.get();
-      if (snap.exists) {
-        const data = snap.data();
-        const payment = data.payment || {};
-        
-        if (payment.status !== 'pending_verification') {
-          return res.status(400).json({ error: 'No pending payment to verify for this invoice.' });
+    if (firestore) {
+      try {
+        const invRef = firestore.collection('users').doc(uid).collection('invoices').doc(id);
+        const snap = await invRef.get();
+        if (snap.exists) {
+          const data = snap.data();
+          const payment = data.payment || {};
+          
+          if (payment.status !== 'pending_verification') {
+            return res.status(400).json({ error: 'No pending payment to verify for this invoice.' });
+          }
+
+          payment.status = 'verified';
+          payment.verifiedAt = new Date().toISOString();
+          payment.verifiedBy = 'manual';
+
+          const activity = data.activity || [];
+          activity.push({
+            event: 'payment_verified',
+            timestamp: new Date().toISOString(),
+            actor: 'owner',
+            details: { transactionId: payment.transactionId }
+          });
+
+          await invRef.update({ 
+            payment,
+            status: 'paid',
+            activity,
+            paidAt: payment.paidAt
+          });
+
+          return res.json({ success: true, message: 'Payment verified. Invoice marked as paid.', payment });
         }
-
-        payment.status = 'verified';
-        payment.verifiedAt = new Date().toISOString();
-        payment.verifiedBy = 'manual';
-
-        const activity = data.activity || [];
-        activity.push({
-          event: 'payment_verified',
-          timestamp: new Date().toISOString(),
-          actor: 'owner',
-          details: { transactionId: payment.transactionId }
-        });
-
-        await invRef.update({ 
-          payment,
-          status: 'paid',
-          activity,
-          paidAt: payment.paidAt
-        });
-
-        return res.json({ success: true, message: 'Payment verified. Invoice marked as paid.', payment });
+      } catch (err) {
+        console.warn('Firestore verify payment error:', err.message);
       }
-    } catch (err) {
-      console.warn('Firestore verify payment error:', err.message);
     }
 
-    res.status(404).json({ error: 'Invoice not found' });
+    res.status(404).json({ error: 'Invoice not found or unauthorized' });
   } catch (err) {
-    console.error('Verify payment error:', err);
-    res.status(500).json({ error: 'Unable to verify payment. Please try again.' });
+    console.error('Verify payment error:', err.message);
+    res.status(500).json({ error: 'Unable to verify payment' });
   }
 });
 
-// --- Send Payment Receipt ---
-router.post('/invoices/:id/send-receipt', requireAuth, async (req, res) => {
+// --- Send Payment Receipt (Rate Limited) ---
+router.post('/invoices/:id/send-receipt', requireAuth, emailLimiter, async (req, res) => {
   try {
     const { id } = req.params;
     const uid = req.user.uid;
@@ -604,24 +931,29 @@ router.post('/invoices/:id/send-receipt', requireAuth, async (req, res) => {
     let invoice = null;
     let senderProfile = null;
 
-    try {
-      const invRef = firestore.collection('users').doc(uid).collection('invoices').doc(id);
-      const invSnap = await invRef.get();
-      if (invSnap.exists) {
-        invoice = { id: invSnap.id, ...invSnap.data() };
-      }
+    if (firestore) {
+      try {
+        const invRef = firestore.collection('users').doc(uid).collection('invoices').doc(id);
+        const invSnap = await invRef.get();
+        if (invSnap.exists) {
+          invoice = { id: invSnap.id, ...invSnap.data() };
+        }
 
-      const profileRef = firestore.collection('users').doc(uid).collection('profile').doc('data');
-      const profileSnap = await profileRef.get();
-      if (profileSnap.exists) {
-        senderProfile = profileSnap.data();
+        const profileRef = firestore.collection('users').doc(uid).collection('profile').doc('data');
+        const profileSnap = await profileRef.get();
+        if (profileSnap.exists) {
+          senderProfile = profileSnap.data();
+        }
+      } catch (err) {
+        console.warn('Firestore read error in receipt:', err.message);
       }
-    } catch (err) {
-      console.warn('Firestore read error:', err.message);
     }
 
+    if (!invoice) invoice = db.getInvoiceById(id, uid);
+    if (!senderProfile) senderProfile = db.getProfile(uid);
+
     if (!invoice) {
-      return res.status(404).json({ error: 'Invoice not found' });
+      return res.status(404).json({ error: 'Invoice not found or unauthorized' });
     }
 
     if (invoice.status !== 'paid') {
@@ -629,30 +961,11 @@ router.post('/invoices/:id/send-receipt', requireAuth, async (req, res) => {
     }
 
     const recipientEmail = invoice.clientEmail;
-    if (!recipientEmail) {
-      return res.status(400).json({ error: 'Client email address is missing.' });
+    if (!recipientEmail || !EMAIL_REGEX.test(recipientEmail.trim())) {
+      return res.status(400).json({ error: 'Client email address is invalid or missing.' });
     }
 
     const result = await emailService.sendReceiptEmail(invoice, senderProfile, recipientEmail, invoice.payment);
-
-    // Log receipt sent activity
-    try {
-      const invRef = firestore.collection('users').doc(uid).collection('invoices').doc(id);
-      const snap = await invRef.get();
-      if (snap.exists) {
-        const data = snap.data();
-        const activity = data.activity || [];
-        activity.push({
-          event: 'receipt_sent',
-          timestamp: new Date().toISOString(),
-          actor: 'owner',
-          details: { to: recipientEmail }
-        });
-        await invRef.update({ activity });
-      }
-    } catch (err) {
-      console.warn('Receipt activity log error:', err.message);
-    }
 
     res.json({
       success: true,
@@ -660,11 +973,8 @@ router.post('/invoices/:id/send-receipt', requireAuth, async (req, res) => {
       ...result
     });
   } catch (err) {
-    console.error('Send receipt error:', err);
-    res.status(500).json({ 
-      error: 'Unable to send receipt',
-      message: err.message || 'Please try again.'
-    });
+    console.error('Send receipt error:', err.message);
+    res.status(500).json({ error: 'Unable to send receipt' });
   }
 });
 
@@ -672,12 +982,14 @@ router.post('/invoices/:id/send-receipt', requireAuth, async (req, res) => {
 router.get('/recurring', requireAuth, async (req, res) => {
   try {
     const uid = req.user.uid;
-    try {
-      const snap = await firestore.collection('users').doc(uid).collection('recurring').get();
-      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      return res.json(list);
-    } catch (err) {
-      console.warn('Firestore recurring error:', err.message);
+    if (firestore) {
+      try {
+        const snap = await firestore.collection('users').doc(uid).collection('recurring').get();
+        const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        return res.json(list);
+      } catch (err) {
+        console.warn('Firestore recurring error:', err.message);
+      }
     }
     res.json([]);
   } catch (err) {
@@ -690,14 +1002,17 @@ router.post('/recurring', requireAuth, async (req, res) => {
     const uid = req.user.uid;
     const item = {
       ...req.body,
+      uid,
       createdAt: new Date().toISOString(),
       status: req.body.status || 'active'
     };
-    try {
-      const docRef = await firestore.collection('users').doc(uid).collection('recurring').add(item);
-      return res.json({ id: docRef.id, ...item });
-    } catch (err) {
-      console.warn('Firestore recurring add error:', err.message);
+    if (firestore) {
+      try {
+        const docRef = await firestore.collection('users').doc(uid).collection('recurring').add(item);
+        return res.json({ id: docRef.id, ...item });
+      } catch (err) {
+        console.warn('Firestore recurring add error:', err.message);
+      }
     }
     res.json({ id: Date.now().toString(), ...item });
   } catch (err) {
@@ -709,11 +1024,13 @@ router.put('/recurring/:id', requireAuth, async (req, res) => {
   try {
     const uid = req.user.uid;
     const { id } = req.params;
-    try {
-      await firestore.collection('users').doc(uid).collection('recurring').doc(id).set(req.body, { merge: true });
-      return res.json({ id, ...req.body });
-    } catch (err) {
-      console.warn('Firestore recurring update error:', err.message);
+    if (firestore) {
+      try {
+        await firestore.collection('users').doc(uid).collection('recurring').doc(id).set(req.body, { merge: true });
+        return res.json({ id, ...req.body });
+      } catch (err) {
+        console.warn('Firestore recurring update error:', err.message);
+      }
     }
     res.json({ id, ...req.body });
   } catch (err) {
@@ -725,11 +1042,13 @@ router.delete('/recurring/:id', requireAuth, async (req, res) => {
   try {
     const uid = req.user.uid;
     const { id } = req.params;
-    try {
-      await firestore.collection('users').doc(uid).collection('recurring').doc(id).delete();
-      return res.json({ success: true, message: 'Recurring schedule deleted' });
-    } catch (err) {
-      console.warn('Firestore recurring delete error:', err.message);
+    if (firestore) {
+      try {
+        await firestore.collection('users').doc(uid).collection('recurring').doc(id).delete();
+        return res.json({ success: true, message: 'Recurring schedule deleted' });
+      } catch (err) {
+        console.warn('Firestore recurring delete error:', err.message);
+      }
     }
     res.json({ success: true });
   } catch (err) {
@@ -741,31 +1060,33 @@ router.delete('/recurring/:id', requireAuth, async (req, res) => {
 router.get('/payments', requireAuth, async (req, res) => {
   try {
     const uid = req.user.uid;
-    try {
-      const snap = await firestore.collection('users').doc(uid).collection('invoices').get();
-      const payments = [];
-      snap.docs.forEach(docSnap => {
-        const inv = docSnap.data();
-        if (inv.payment && (inv.payment.status === 'verified' || inv.payment.status === 'pending_verification' || inv.status === 'paid')) {
-          payments.push({
-            id: inv.payment.transactionId || docSnap.id,
-            invoiceId: docSnap.id,
-            client: inv.client || 'Unknown',
-            clientEmail: inv.clientEmail || '',
-            amount: inv.amount || 0,
-            currency: inv.currency || 'INR - Indian Rupee',
-            method: inv.payment.method || 'upi',
-            transactionId: inv.payment.transactionId || 'DIRECT',
-            status: inv.payment.status || (inv.status === 'paid' ? 'verified' : 'pending_verification'),
-            date: inv.payment.paidAt || inv.due || inv.created,
-            payerName: inv.payment.payerName || '',
-            payerEmail: inv.payment.payerEmail || ''
-          });
-        }
-      });
-      return res.json(payments);
-    } catch (err) {
-      console.warn('Firestore payments error:', err.message);
+    if (firestore) {
+      try {
+        const snap = await firestore.collection('users').doc(uid).collection('invoices').get();
+        const payments = [];
+        snap.docs.forEach(docSnap => {
+          const inv = docSnap.data();
+          if (inv.payment && (inv.payment.status === 'verified' || inv.payment.status === 'pending_verification' || inv.status === 'paid')) {
+            payments.push({
+              id: inv.payment.transactionId || docSnap.id,
+              invoiceId: docSnap.id,
+              client: inv.client || 'Unknown',
+              clientEmail: inv.clientEmail || '',
+              amount: inv.amount || 0,
+              currency: inv.currency || 'INR - Indian Rupee',
+              method: inv.payment.method || 'upi',
+              transactionId: inv.payment.transactionId || 'DIRECT',
+              status: inv.payment.status || (inv.status === 'paid' ? 'verified' : 'pending_verification'),
+              date: inv.payment.paidAt || inv.due || inv.created,
+              payerName: inv.payment.payerName || '',
+              payerEmail: inv.payment.payerEmail || ''
+            });
+          }
+        });
+        return res.json(payments);
+      } catch (err) {
+        console.warn('Firestore payments error:', err.message);
+      }
     }
     res.json([]);
   } catch (err) {
@@ -777,12 +1098,14 @@ router.get('/payments', requireAuth, async (req, res) => {
 router.get('/expenses', requireAuth, async (req, res) => {
   try {
     const uid = req.user.uid;
-    try {
-      const snap = await firestore.collection('users').doc(uid).collection('expenses').orderBy('date', 'desc').get();
-      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      return res.json(list);
-    } catch (err) {
-      console.warn('Firestore expenses error:', err.message);
+    if (firestore) {
+      try {
+        const snap = await firestore.collection('users').doc(uid).collection('expenses').orderBy('date', 'desc').get();
+        const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        return res.json(list);
+      } catch (err) {
+        console.warn('Firestore expenses error:', err.message);
+      }
     }
     res.json([]);
   } catch (err) {
@@ -795,13 +1118,16 @@ router.post('/expenses', requireAuth, async (req, res) => {
     const uid = req.user.uid;
     const expense = {
       ...req.body,
+      uid,
       createdAt: new Date().toISOString()
     };
-    try {
-      const docRef = await firestore.collection('users').doc(uid).collection('expenses').add(expense);
-      return res.json({ id: docRef.id, ...expense });
-    } catch (err) {
-      console.warn('Firestore expense add error:', err.message);
+    if (firestore) {
+      try {
+        const docRef = await firestore.collection('users').doc(uid).collection('expenses').add(expense);
+        return res.json({ id: docRef.id, ...expense });
+      } catch (err) {
+        console.warn('Firestore expense add error:', err.message);
+      }
     }
     res.json({ id: Date.now().toString(), ...expense });
   } catch (err) {
@@ -813,11 +1139,13 @@ router.put('/expenses/:id', requireAuth, async (req, res) => {
   try {
     const uid = req.user.uid;
     const { id } = req.params;
-    try {
-      await firestore.collection('users').doc(uid).collection('expenses').doc(id).set(req.body, { merge: true });
-      return res.json({ id, ...req.body });
-    } catch (err) {
-      console.warn('Firestore expense update error:', err.message);
+    if (firestore) {
+      try {
+        await firestore.collection('users').doc(uid).collection('expenses').doc(id).set(req.body, { merge: true });
+        return res.json({ id, ...req.body });
+      } catch (err) {
+        console.warn('Firestore expense update error:', err.message);
+      }
     }
     res.json({ id, ...req.body });
   } catch (err) {
@@ -829,11 +1157,13 @@ router.delete('/expenses/:id', requireAuth, async (req, res) => {
   try {
     const uid = req.user.uid;
     const { id } = req.params;
-    try {
-      await firestore.collection('users').doc(uid).collection('expenses').doc(id).delete();
-      return res.json({ success: true });
-    } catch (err) {
-      console.warn('Firestore expense delete error:', err.message);
+    if (firestore) {
+      try {
+        await firestore.collection('users').doc(uid).collection('expenses').doc(id).delete();
+        return res.json({ success: true });
+      } catch (err) {
+        console.warn('Firestore expense delete error:', err.message);
+      }
     }
     res.json({ success: true });
   } catch (err) {
@@ -841,8 +1171,8 @@ router.delete('/expenses/:id', requireAuth, async (req, res) => {
   }
 });
 
-// --- AI Invoice Assistant Natural Language Parser ---
-router.post('/ai/parse-invoice', requireAuth, async (req, res) => {
+// --- AI Invoice Assistant Natural Language Parser (Rate Limited) ---
+router.post('/ai/parse-invoice', requireAuth, aiLimiter, async (req, res) => {
   try {
     const { prompt } = req.body;
     if (!prompt || typeof prompt !== 'string') {
@@ -915,27 +1245,78 @@ router.post('/ai/parse-invoice', requireAuth, async (req, res) => {
       message: 'Invoice parsed successfully from prompt'
     });
   } catch (err) {
-    console.error('AI parse error:', err);
+    console.error('AI parse error:', err.message);
     res.status(500).json({ error: 'Failed to parse natural language invoice' });
   }
 });
 
-// --- Profile API ---
-router.get('/profile', (req, res) => {
-  const profile = db.getProfile();
-  res.json(profile);
+// --- Profile API (Multi-Tenant Scoped) ---
+router.get('/profile', requireAuth, async (req, res) => {
+  try {
+    const uid = req.user.uid;
+    if (firestore) {
+      try {
+        const snap = await firestore.collection('users').doc(uid).collection('profile').doc('data').get();
+        if (snap.exists) {
+          return res.json(snap.data());
+        }
+      } catch (err) {
+        console.warn('Firestore getProfile error:', err.message);
+      }
+    }
+    res.json(db.getProfile(uid));
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to retrieve profile' });
+  }
 });
 
-router.put('/profile', (req, res) => {
-  const updated = db.updateProfile(req.body);
-  res.json(updated);
+router.put('/profile', requireAuth, async (req, res) => {
+  try {
+    const uid = req.user.uid;
+    if (firestore) {
+      try {
+        await firestore.collection('users').doc(uid).collection('profile').doc('data').set(req.body, { merge: true });
+        return res.json(req.body);
+      } catch (err) {
+        console.warn('Firestore updateProfile error:', err.message);
+      }
+    }
+    const updated = db.updateProfile(req.body, uid);
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update profile' });
+  }
 });
 
-// --- Account Delete ---
-router.delete('/account', (req, res) => {
-  db.resetAll();
-  res.json({ message: 'Account data cleared successfully' });
+
+// ============================================================
+// ADMIN-ONLY ROUTES (Protected by requireAuth & requireAdmin)
+// ============================================================
+
+// --- Admin System Overview ---
+router.get('/admin/overview', requireAuth, requireAdmin, (req, res) => {
+  res.json({
+    status: 'healthy',
+    adminUser: req.user.email,
+    timestamp: new Date().toISOString(),
+    system: {
+      uptimeSeconds: Math.floor(process.uptime()),
+      nodeVersion: process.version,
+      memoryUsageMb: Math.round(process.memoryUsage().heapUsed / 1024 / 1024)
+    }
+  });
+});
+
+// --- Admin Account Reset / Wipe (Strictly Protected) ---
+router.delete('/account', requireAuth, requireAdmin, (req, res) => {
+  try {
+    const uid = req.user.uid;
+    const result = db.resetAccount(uid);
+    res.json(result);
+  } catch (err) {
+    console.error('Account reset error:', err.message);
+    res.status(500).json({ error: 'Failed to reset account' });
+  }
 });
 
 module.exports = router;
-

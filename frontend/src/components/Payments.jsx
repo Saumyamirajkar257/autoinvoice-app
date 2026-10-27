@@ -58,15 +58,20 @@ export default function Payments({ userProfile, showToast, onRefresh }) {
       clientEmail: payment.clientEmail || '',
       amount: payment.amount || 0,
       currency: payment.currency || userProfile?.currency || 'INR - Indian Rupee',
-      created: payment.date || 'Recent',
-      payment: {
-        method: payment.method || 'upi',
-        transactionId: payment.transactionId || 'DIRECT_TRANSFER',
-        paidAt: payment.date || new Date().toISOString()
-      }
+      created: payment.date || 'Recent'
     };
-    generateReceiptPDF(inv, userProfile, { company: payment.client, email: payment.clientEmail });
-    showToast(`Receipt downloaded for ${payment.invoiceId || 'payment'}`, 'success');
+    const paymentRecord = payment.paymentRecord || {
+      receiptNumber: payment.receiptNumber || `REC-${(payment.invoiceId || '001').replace(/^INV-?/i, '')}`,
+      amount: payment.amount,
+      previousPaid: payment.previousPaid || 0,
+      totalPaidToDate: payment.totalPaidToDate || payment.amount,
+      remainingBalance: payment.remainingBalance || 0,
+      method: payment.method || 'upi',
+      transactionId: payment.transactionId || 'DIRECT_TRANSFER',
+      paidAt: payment.date || new Date().toISOString()
+    };
+    generateReceiptPDF(inv, userProfile, { company: payment.client, email: payment.clientEmail }, paymentRecord);
+    showToast(`Payment receipt downloaded for ${payment.invoiceId || 'transaction'}`, 'success');
   };
 
   const handleExportCSV = () => {

@@ -1,8 +1,10 @@
 import React, { useState, useMemo } from 'react';
-import { Plus, Search, Edit2, Trash2, X, FileSpreadsheet, ChevronLeft, ChevronRight, Users } from 'lucide-react';
+import { Plus, Search, Edit2, Trash2, X, FileSpreadsheet, ChevronLeft, ChevronRight, Users, FileText } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
 
 export default function Clients({ clients = [], onRefresh, showToast }) {
+  const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
   const [editingClient, setEditingClient] = useState(null);
@@ -18,6 +20,8 @@ export default function Clients({ clients = [], onRefresh, showToast }) {
   const [email, setEmail] = useState('');
   const [country, setCountry] = useState('India');
   const [phone, setPhone] = useState('');
+  const [address, setAddress] = useState('');
+  const [gstin, setGstin] = useState('');
 
   const openAddModal = () => {
     setEditingClient(null);
@@ -26,6 +30,8 @@ export default function Clients({ clients = [], onRefresh, showToast }) {
     setEmail('');
     setCountry('India');
     setPhone('');
+    setAddress('');
+    setGstin('');
     setModalOpen(true);
   };
 
@@ -36,6 +42,8 @@ export default function Clients({ clients = [], onRefresh, showToast }) {
     setEmail(c.email || '');
     setCountry(c.country || 'India');
     setPhone(c.phone || '');
+    setAddress(c.address || '');
+    setGstin(c.gstin || '');
     setModalOpen(true);
   };
 
@@ -54,23 +62,21 @@ export default function Clients({ clients = [], onRefresh, showToast }) {
 
     setSaving(true);
     try {
+      const payload = {
+        company: company.trim(),
+        contact: contact.trim(),
+        email: email.trim(),
+        country,
+        phone: phone.trim(),
+        address: address.trim(),
+        gstin: gstin.trim().toUpperCase()
+      };
+
       if (editingClient) {
-        await api.updateClient(editingClient.id, {
-          company,
-          contact,
-          email,
-          country,
-          phone
-        });
+        await api.updateClient(editingClient.id, payload);
         showToast('Client updated successfully', 'success');
       } else {
-        await api.addClient({
-          company,
-          contact,
-          email,
-          country,
-          phone
-        });
+        await api.addClient(payload);
         showToast('Client added successfully', 'success');
       }
       closeModal();
@@ -207,7 +213,14 @@ export default function Clients({ clients = [], onRefresh, showToast }) {
               ) : (
                 paginatedClients.map((client) => (
                   <tr key={client.id}>
-                    <td style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{client.company}</td>
+                    <td style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                      <div>{client.company}</div>
+                      {client.gstin && (
+                        <span style={{ fontSize: '11px', fontFamily: 'monospace', color: 'var(--text-muted)' }}>
+                          GSTIN: {client.gstin}
+                        </span>
+                      )}
+                    </td>
                     <td>{client.contact || '-'}</td>
                     <td>
                       <span style={{ color: 'var(--accent-primary)' }}>{client.email || '-'}</span>
@@ -216,6 +229,14 @@ export default function Clients({ clients = [], onRefresh, showToast }) {
                     <td>{client.phone || '-'}</td>
                     <td>
                       <div className="actions-cell">
+                        <button
+                          className="icon-action-btn"
+                          title="Create Invoice for this Client"
+                          onClick={() => navigate('/invoices/create')}
+                          style={{ color: 'var(--accent-primary)' }}
+                        >
+                          <FileText size={15} />
+                        </button>
                         <button
                           className="icon-action-btn"
                           title="Edit Client"
@@ -361,6 +382,29 @@ export default function Clients({ clients = [], onRefresh, showToast }) {
                       onChange={(e) => setPhone(e.target.value)}
                     />
                   </div>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Client GSTIN / Tax ID (Optional)</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    placeholder="e.g. 27ABCDE1234F1Z5"
+                    value={gstin}
+                    onChange={(e) => setGstin(e.target.value.toUpperCase())}
+                    maxLength={15}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Full Address (Optional)</label>
+                  <textarea
+                    className="form-textarea"
+                    placeholder="Street, City, State, PIN Code..."
+                    value={address}
+                    onChange={(e) => setAddress(e.target.value)}
+                    rows={2}
+                  />
                 </div>
               </div>
 

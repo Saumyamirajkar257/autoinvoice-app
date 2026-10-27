@@ -18,8 +18,21 @@ export default function Profile({ userProfile, onRefresh, showToast, currentThem
   const [customQrUrl, setCustomQrUrl] = useState('');
 
   // Default Template
-  const [defaultTemplate, setDefaultTemplate] = useState('modern');
+  const [defaultTemplate, setDefaultTemplate] = useState('gst_pro');
   const [businessGstin, setBusinessGstin] = useState('');
+  const [pan, setPan] = useState('');
+
+  // Banking Details
+  const [bankName, setBankName] = useState('');
+  const [accountHolder, setAccountHolder] = useState('');
+  const [accountNumber, setAccountNumber] = useState('');
+  const [ifscCode, setIfscCode] = useState('');
+  const [branch, setBranch] = useState('');
+
+  // Signatory & Terms
+  const [signatoryName, setSignatoryName] = useState('');
+  const [signatoryDesignation, setSignatoryDesignation] = useState('Authorized Signatory');
+  const [defaultTerms, setDefaultTerms] = useState('');
 
   const [saving, setSaving] = useState(false);
 
@@ -37,8 +50,17 @@ export default function Profile({ userProfile, onRefresh, showToast, currentThem
       setLogo(userProfile.logo || '');
       setUpiId(userProfile.upiId || '');
       setCustomQrUrl(userProfile.customQrUrl || '');
-      setDefaultTemplate(userProfile.defaultTemplate || 'modern');
+      setDefaultTemplate(userProfile.defaultTemplate || 'gst_pro');
       setBusinessGstin(userProfile.businessGstin || '');
+      setPan(userProfile.pan || '');
+      setBankName(userProfile.bankName || '');
+      setAccountHolder(userProfile.accountHolder || '');
+      setAccountNumber(userProfile.accountNumber || '');
+      setIfscCode(userProfile.ifscCode || '');
+      setBranch(userProfile.branch || '');
+      setSignatoryName(userProfile.signatoryName || '');
+      setSignatoryDesignation(userProfile.signatoryDesignation || 'Authorized Signatory');
+      setDefaultTerms(userProfile.defaultTerms || '');
     }
   }, [userProfile]);
 
@@ -86,7 +108,16 @@ export default function Profile({ userProfile, onRefresh, showToast, currentThem
         upiId,
         customQrUrl,
         defaultTemplate,
-        businessGstin
+        businessGstin,
+        pan,
+        bankName,
+        accountHolder,
+        accountNumber,
+        ifscCode,
+        branch,
+        signatoryName,
+        signatoryDesignation,
+        defaultTerms
       };
 
       await api.updateProfile(payload);
@@ -259,17 +290,144 @@ export default function Profile({ userProfile, onRefresh, showToast, currentThem
               </div>
             </div>
 
-            <div className="form-group" style={{ marginTop: '4px' }}>
-              <label className="form-label">
-                Business GSTIN <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>(Optional - for Indian GST Invoicing)</span>
-              </label>
-              <input
-                type="text"
-                className="form-input"
-                placeholder="e.g. 27AAAAA0000A1Z5 (15-character GSTIN)"
-                value={businessGstin}
-                onChange={(e) => setBusinessGstin(e.target.value.toUpperCase())}
-                maxLength={15}
+            <div className="form-row-2" style={{ marginTop: '4px' }}>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label">
+                  Business GSTIN <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>(Optional - for Indian GST)</span>
+                </label>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="e.g. 27AAAAA0000A1Z5 (15-character GSTIN)"
+                  value={businessGstin}
+                  onChange={(e) => setBusinessGstin(e.target.value.toUpperCase())}
+                  maxLength={15}
+                />
+              </div>
+
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label">
+                  Permanent Account Number (PAN)
+                </label>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="e.g. ABCDE1234F"
+                  value={pan}
+                  onChange={(e) => setPan(e.target.value.toUpperCase())}
+                  maxLength={10}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Card: Bank Account & Settlement Details */}
+          <div className="card" style={{ margin: 0 }}>
+            <h3 className="card-title">Banking & Settlement Information</h3>
+            <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '-8px', marginBottom: '20px' }}>
+              Bank account credentials rendered on Tax Invoices for client NEFT, RTGS, and IMPS remittances.
+            </p>
+
+            <div className="form-row-2" style={{ marginBottom: '14px' }}>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label">Bank Name</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="e.g. HDFC Bank, State Bank of India, ICICI Bank"
+                  value={bankName}
+                  onChange={(e) => setBankName(e.target.value)}
+                />
+              </div>
+
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label">Beneficiary Account Name</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="e.g. Acme Tech Innovations Pvt Ltd"
+                  value={accountHolder}
+                  onChange={(e) => setAccountHolder(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="form-row-3">
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label">Bank Account Number</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="e.g. 50200012345678"
+                  value={accountNumber}
+                  onChange={(e) => setAccountNumber(e.target.value)}
+                />
+              </div>
+
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label">IFSC Code</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="e.g. HDFC0001234"
+                  value={ifscCode}
+                  onChange={(e) => setIfscCode(e.target.value.toUpperCase())}
+                  maxLength={11}
+                />
+              </div>
+
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label">Branch Name</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="e.g. Nariman Point, Mumbai"
+                  value={branch}
+                  onChange={(e) => setBranch(e.target.value)}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Card: Signatory & Default Invoice Terms */}
+          <div className="card" style={{ margin: 0 }}>
+            <h3 className="card-title">Authorized Signatory & Legal Terms</h3>
+            <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '-8px', marginBottom: '20px' }}>
+              Print official designation and default contractual declarations on documents.
+            </p>
+
+            <div className="form-row-2" style={{ marginBottom: '14px' }}>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label">Signatory Name</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="e.g. John Doe"
+                  value={signatoryName}
+                  onChange={(e) => setSignatoryName(e.target.value)}
+                />
+              </div>
+
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label">Signatory Designation</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="e.g. Managing Director / Partner"
+                  value={signatoryDesignation}
+                  onChange={(e) => setSignatoryDesignation(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="form-group" style={{ margin: 0 }}>
+              <label className="form-label">Default Terms & Conditions</label>
+              <textarea
+                className="form-textarea"
+                placeholder="Payment is requested within the due period. Late payments may attract statutory interest."
+                value={defaultTerms}
+                onChange={(e) => setDefaultTerms(e.target.value)}
+                rows={2}
               />
             </div>
           </div>

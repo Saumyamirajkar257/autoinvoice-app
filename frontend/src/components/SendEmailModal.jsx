@@ -112,7 +112,8 @@ export default function SendEmailModal({
       onClose();
     } catch (err) {
       console.error('Send invoice email error:', err);
-      showToast('Unable to send the invoice. Please check the email address or try again.', 'error');
+      const errorMsg = err?.message || (typeof err === 'string' ? err : 'Unable to send the invoice. Please check the email address or try again.');
+      showToast(errorMsg, 'error');
     } finally {
       setSending(false);
     }
